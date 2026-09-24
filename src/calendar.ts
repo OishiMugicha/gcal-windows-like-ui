@@ -109,3 +109,16 @@ export function defaultCalendar(calendars: Calendar[], selected: string[], prefe
     || calendars.find(c => c.writable && selected.includes(c.id))
     || calendars.find(c => c.writable);
 }
+
+// Demo events omit Google metadata; Google events explicitly set organizerSelf.
+export function moveUnavailableReason(event: { recurring?: boolean; eventType?: string; organizerSelf?: boolean }): string {
+  if (event.recurring) return '繰り返し予定の移動はGoogle Calendarで操作してください。';
+  if (event.eventType && event.eventType !== 'default') return 'この種類の予定は別のカレンダーへ移動できません。';
+  if (event.organizerSelf === false) return '主催カレンダー以外からは予定を移動できません。';
+  return '';
+}
+export function sameEventContent(a: CalendarEvent, b: CalendarEvent): boolean {
+  return a.title === b.title && (a.description || '') === (b.description || '') && (a.location || '') === (b.location || '')
+    && (a.allDay && b.allDay ? a.startDate === b.startDate && a.endDate === b.endDate
+      : !a.allDay && !b.allDay && Date.parse(a.start) === Date.parse(b.start) && Date.parse(a.end) === Date.parse(b.end));
+}

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, rangeFor, readSettings, timeLabel, timeOf, visibleDays, weekday } from './calendar';
+import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, moveUnavailableReason, rangeFor, readSettings, sameEventContent, timeLabel, timeOf, visibleDays, weekday } from './calendar';
 import { demoCalendars, demoEvents } from './demo';
 import type { Calendar, CalendarEvent, EventDraft, Settings, View } from './types';
 import TimeGrid from './TimeGrid';
 import { useCalendarTools } from './useCalendarTools';
 import SettingsDialog from './SettingsDialog';
-import EventEditor, { draftFrom } from './EventEditor';
+import EventEditor, { draftEvent, draftFrom } from './EventEditor';
 import Modal from './Modal';
-import { ConnectionExpired, connectGoogle, deleteGoogleEvent, disconnectGoogle, loadCalendars, loadEvents, newEventId, prepareGoogle, restoreGoogle, saveGoogleEvent } from './google';
+import { ConnectionExpired, OperationUncertain, connectGoogle, deleteGoogleEvent, disconnectGoogle, getGoogleEvent, loadCalendars, loadEvents, moveGoogleEvent, newEventId, prepareGoogle, restoreGoogle, saveGoogleEvent } from './google';
 const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
 const sameEvent = (a: CalendarEvent, b: CalendarEvent) => a.id === b.id && a.calendarId === b.calendarId;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '操作に失敗しました。';
@@ -27,6 +27,8 @@ export default function App() {
   const [demoDefault, setDemoDefault] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [draft, setDraft] = useState<EventDraft | null>(null);
+  const [editingSource, setEditingSource] = useState<CalendarEvent | null>(null);
+  const [uncertainMove, setUncertainMove] = useState<{ source: CalendarEvent; destination: string } | null>(null);
   const [editorError, setEditorError] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -86,11 +88,11 @@ export default function App() {
     } else setAnchor(addDays(anchor, direction * (settings.view === 'week' ? 7 : 1)));
   }
   function selectView(view: View) { setSettings(s => ({ ...s, view })); }
-  function openEditor(event: CalendarEvent) { pendingNewId.current = ''; setEditorError(''); setDraft(draftFrom(event)); }
+  function openEditor(event: CalendarEvent) { pendingNewId.current = ''; setEditingSource(event); setUncertainMove(null); setEditorError(''); setDraft(draftFrom(event)); }
   function newDraft(start = atMinute(anchor, settings.startMinute), end = start + 60 * 60_000) {
     const calendar = defaultCalendar(calendars, selected, preferredCalendar);
     if (!calendar) { setError('書き込み可能なカレンダーがありません。'); return; }
-    pendingNewId.current = newEventId(); setEditorError('');
+    pendingNewId.current = newEventId(); setEditingSource(null); setUncertainMove(null); setEditorError('');
     setDraft(draftFrom({ id: '', calendarId: calendar.id, title: '', allDay: false, start: new Date(start).toISOString(), end: new Date(end).toISOString() }));
   }
   function markOutside(event: CalendarEvent) {
@@ -98,26 +100,84 @@ export default function App() {
     const visible = days.some(d => event.allDay ? isOnDay(event, d) : Date.parse(event.start) < atMinute(d, settings.endMinute) && Date.parse(event.end) > atMinute(d, settings.startMinute));
     setNotice(!selected.includes(event.calendarId) ? '保存しました。作成先カレンダーは現在非表示です。' : !visible ? '保存しました。予定は現在の表示範囲外です（' + day + '）。' : '保存しました。');
   }
+  function replaceEvent(source: CalendarEvent, saved: CalendarEvent) {
+    setEvents(current => [...current.filter(e => !sameEvent(e, source) && !sameEvent(e, saved)), saved]);
+  }
+  function adoptMovedEvent(saved: CalendarEvent, wanted: CalendarEvent) {
+    setEditingSource(saved);
+    setDraft(draftFrom({ ...wanted, id: saved.id, calendarId: saved.calendarId, etag: saved.etag,
+      htmlLink: saved.htmlLink, organizerSelf: saved.organizerSelf, eventType: saved.eventType }));
+  }
   async function save(event: CalendarEvent, fromEditor = true) {
-    if (busyRef.current) return;
-    const isNew = !event.id, target = isNew ? { ...event, id: pendingNewId.current || newEventId() } : event;
+    if (busyRef.current || (fromEditor && uncertainMove)) return;
+    const source = fromEditor ? editingSource : event;
+    const isNew = !event.id;
+    let target = isNew ? { ...event, id: pendingNewId.current || newEventId() } : { ...event, etag: source?.etag ?? event.etag };
+    const moving = !!source && source.calendarId !== event.calendarId;
+    if (!calendars.some(c => c.id === target.calendarId && c.writable)
+      || (source && !calendars.some(c => c.id === source.calendarId && c.writable))) {
+      setEditorError('書き込み可能なカレンダーを選択してください。'); return;
+    }
+    if (moving && moveUnavailableReason(source)) { setEditorError(moveUnavailableReason(source)); return; }
     busyRef.current = true; setBusy(true); setEditorError(''); setError(''); revision.current++; setLoading(false);
+    let moved: CalendarEvent | undefined;
     try {
-      const saved = mode === 'demo' ? target : await saveGoogleEvent(target, isNew);
-      setEvents(current => [...current.filter(e => !sameEvent(e, saved)), saved]);
-      if (fromEditor) setDraft(null);
+      if (moving) {
+        try { moved = mode === 'demo' ? { ...source, calendarId: target.calendarId } : await moveGoogleEvent(source, target.calendarId); }
+        catch (error) {
+          if (error instanceof OperationUncertain) {
+            setUncertainMove({ source, destination: target.calendarId });
+            throw new Error('移動結果を確認できません。「移動結果を確認」を押してください。確認できない場合は閉じて更新してください。');
+          }
+          throw error;
+        }
+        replaceEvent(source, moved);
+        adoptMovedEvent(moved, target);
+        target = { ...target, id: moved.id, etag: moved.etag, htmlLink: moved.htmlLink,
+          organizerSelf: moved.organizerSelf, eventType: moved.eventType };
+      }
+      const saved = mode === 'demo' ? target : moved && sameEventContent(source!, target) ? moved : await saveGoogleEvent(target, isNew);
+      replaceEvent(source || saved, saved);
+      if (fromEditor) { setDraft(null); setEditingSource(null); }
       markOutside(saved);
     } catch (e) {
-      if (fromEditor) setEditorError(errorMessage(e)); else setError(errorMessage(e));
+      const message = (moved ? e instanceof OperationUncertain ? '移動済みですが、内容変更の保存結果は不明です。' : '移動済みですが、内容変更は未保存です。' : '') + errorMessage(e);
+      if (fromEditor) setEditorError(message); else setError(message);
       if (e instanceof ConnectionExpired) setExpired(true);
     } finally { busyRef.current = false; setBusy(false); }
   }
-  async function remove(event: CalendarEvent) {
-    if (busyRef.current) return;
+  async function checkMove() {
+    if (!uncertainMove || !draft || busyRef.current) return;
+    const { source, destination } = uncertainMove;
+    busyRef.current = true; setBusy(true); revision.current++; setLoading(false);
+    try {
+      const [original, moved] = await Promise.all([
+        getGoogleEvent(source.calendarId, source.id), getGoogleEvent(destination, source.id),
+      ]);
+      // A guest copy can remain in the source calendar after ownership changes.
+      if (moved?.organizerSelf && (!original || !original.organizerSelf)) {
+        replaceEvent(source, moved);
+        adoptMovedEvent(moved, draftEvent(draft));
+        setUncertainMove(null);
+        setEditorError('移動を確認しました。内容変更がある場合は保存してください。');
+      } else if (original?.organizerSelf && !moved) {
+        setEditingSource(original); replaceEvent(source, original);
+        setUncertainMove(null);
+        setEditorError('予定は元のカレンダーにあります。移動は未完了です。');
+      } else setEditorError('移動結果を確定できません。閉じてカレンダーを更新してください。');
+    } catch (e) {
+      setEditorError('移動結果を確認できません。' + errorMessage(e));
+      if (e instanceof ConnectionExpired) setExpired(true);
+    } finally { busyRef.current = false; setBusy(false); }
+  }
+  async function remove() {
+    if (busyRef.current || uncertainMove || !editingSource) return;
+    const event = editingSource;
+    if (!calendars.some(c => c.id === event.calendarId && c.writable)) return;
     busyRef.current = true; setBusy(true); setEditorError(''); revision.current++; setLoading(false);
     try {
       if (mode === 'google') await deleteGoogleEvent(event);
-      setEvents(current => current.filter(e => !sameEvent(e, event))); setDraft(null); setNotice('予定を削除しました。');
+      setEvents(current => current.filter(e => !sameEvent(e, event))); setDraft(null); setEditingSource(null); setNotice('予定を削除しました。');
     } catch (e) { setEditorError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true); }
     finally { busyRef.current = false; setBusy(false); }
   }
@@ -150,9 +210,14 @@ export default function App() {
     finally { if (attempt === connectionAttempt.current) setConnecting(false); }
   }
   function disconnect() {
-    connectionAttempt.current++; setConnecting(false); setRestoreFailed(false); setDraft(null); setListDay(null);
+    connectionAttempt.current++; setConnecting(false); setRestoreFailed(false); setDraft(null); setEditingSource(null); setUncertainMove(null); setListDay(null);
     revision.current++; disconnectGoogle(); setMode('demo'); setCalendars(demoCalendars); setEvents(demoEvents());
     setExpired(false); setLoading(false); setError(''); setDisconnectPrompt(false);
+  }
+  function closeEditor() {
+    if (busyRef.current || connecting) return;
+    setDraft(null); setEditingSource(null); setUncertainMove(null);
+    void refresh();
   }
   function applySettings(next: Settings) {
     if (mode === 'demo') {
@@ -208,7 +273,11 @@ export default function App() {
     <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading ? '予定を取得中…' : busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
     {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, defaultCalendarId: preferredCalendar }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
-    {draft && <EventEditor initial={draft} calendars={calendars} busy={busy || connecting} error={editorError} onReconnect={expired ? () => void connect() : undefined} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}
+    {draft && <EventEditor draft={draft} source={editingSource} onChange={setDraft} calendars={calendars}
+      busy={busy || connecting} blocked={!!uncertainMove} error={editorError}
+      onReconnect={expired ? () => void connect() : undefined}
+      onCheckMove={uncertainMove ? () => void checkMove() : undefined}
+      onSave={e => void save(e)} onDelete={() => void remove()} onClose={closeEditor} />}
     {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} onClose={() => setListDay(null)}>
       <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}</div>
     </Modal>}

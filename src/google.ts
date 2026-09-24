@@ -1,4 +1,4 @@
-import { ZONE } from './calendar';
+import { moveUnavailableReason, ZONE } from './calendar';
 import type { Calendar, CalendarEvent } from './types';
 interface TokenResponse { access_token?: string; expires_in?: number; error?: string; scope?: string; }
 interface GoogleIdentity { accounts: { oauth2: {
@@ -69,6 +69,8 @@ export function disconnectGoogle() {
   authVersion++; token = ''; expiresAt = 0;
   try { localStorage.removeItem(connectionKey); } catch { /* Storage may be unavailable. */ }
 }
+export class OperationUncertain extends Error {}
+class EventNotFound extends Error {}
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!token || Date.now() >= expiresAt) { disconnectGoogle(); throw new ConnectionExpired(); }
   const requestToken = token;
@@ -76,15 +78,24 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     response = await fetch('https://www.googleapis.com/calendar/v3/' + path, { ...init, signal: AbortSignal.timeout(25_000),
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...init.headers } });
-  } catch { throw new Error(init.method ? '保存結果を確認できません。二重登録を防ぐため、再試行の前に更新して予定を確認してください。' : '予定を取得できません。通信環境を確認して再試行してください。'); }
+  } catch {
+    if (init.method) throw new OperationUncertain('保存結果を確認できません。二重登録を防ぐため、再試行の前に更新して予定を確認してください。');
+    throw new Error('予定を取得できません。通信環境を確認して再試行してください。');
+  }
   if (response.status === 401) { if (token === requestToken) disconnectGoogle(); throw new ConnectionExpired(); }
   if (response.status === 412) throw new Error('この予定は別の場所で変更されています。一度閉じて更新してから編集してください。');
   if (response.status === 403) throw new Error('操作の権限がないか、APIの利用制限に達しています。カレンダーの権限とGoogle Cloud設定を確認してください。');
-  if (response.status === 404 || response.status === 410) throw new Error('予定が見つかりません。一度閉じてカレンダーを更新してください。');
+  if (response.status === 404 || response.status === 410) throw new EventNotFound('予定が見つかりません。一度閉じてカレンダーを更新してください。');
   if (response.status === 409) throw new Error('同じ予定がすでに保存されています。一度閉じて更新してください。');
   if (response.status === 429) throw new Error('アクセスが集中しています。少し待ってから再試行してください。');
+  if (init.method && response.status >= 500) throw new OperationUncertain('Google Calendarへの操作結果を確認できません（' + response.status + '）。更新して予定を確認してください。');
   if (!response.ok) throw new Error('Google Calendarへの操作に失敗しました（' + response.status + '）。');
-  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  if (response.status === 204) return undefined as T;
+  try { return await response.json() as T; }
+  catch {
+    if (init.method) throw new OperationUncertain('保存結果を確認できません。更新して予定を確認してください。');
+    throw new Error('予定を取得できません。更新してください。');
+  }
 }
 interface Page<T> { items?: T[]; nextPageToken?: string; }
 interface GoogleCalendar { id: string; summary?: string; summaryOverride?: string; backgroundColor?: string; accessRole?: string; primary?: boolean; }
@@ -101,11 +112,12 @@ export async function loadCalendars(): Promise<Calendar[]> {
 interface GoogleEvent {
   id: string; summary?: string; description?: string; location?: string; status?: string;
   start?: { date?: string; dateTime?: string }; end?: { date?: string; dateTime?: string };
-  recurringEventId?: string; htmlLink?: string; etag?: string;
+  recurringEventId?: string; recurrence?: string[]; htmlLink?: string; etag?: string;
+  eventType?: string; organizer?: { self?: boolean };
 }
 function fromGoogle(raw: GoogleEvent, calendarId: string): CalendarEvent | undefined {
   if (raw.status === 'cancelled' || !raw.start || !raw.end) return;
-  const base = { id: raw.id, calendarId, title: raw.summary || '（タイトルなし）', description: raw.description, location: raw.location, recurring: !!raw.recurringEventId, htmlLink: raw.htmlLink, etag: raw.etag };
+  const base = { id: raw.id, calendarId, title: raw.summary || '（タイトルなし）', description: raw.description, location: raw.location, recurring: !!raw.recurringEventId || !!raw.recurrence?.length, eventType: raw.eventType || 'default', organizerSelf: raw.organizer?.self === true, htmlLink: raw.htmlLink, etag: raw.etag };
   if (raw.start.date && raw.end.date) return { ...base, allDay: true, startDate: raw.start.date, endDate: raw.end.date };
   if (raw.start.dateTime && raw.end.dateTime) return { ...base, allDay: false, start: raw.start.dateTime, end: raw.end.dateTime };
 }
@@ -133,4 +145,24 @@ export async function saveGoogleEvent(event: CalendarEvent, isNew: boolean): Pro
 }
 export async function deleteGoogleEvent(event: CalendarEvent): Promise<void> {
   await request<void>('calendars/' + encodeURIComponent(event.calendarId) + '/events/' + encodeURIComponent(event.id), { method: 'DELETE', headers: event.etag ? { 'If-Match': event.etag } : {} });
+}
+
+export async function getGoogleEvent(calendarId: string, eventId: string): Promise<CalendarEvent | undefined> {
+  try {
+    const raw = await request<GoogleEvent>('calendars/' + encodeURIComponent(calendarId) + '/events/' + encodeURIComponent(eventId));
+    return fromGoogle(raw, calendarId);
+  } catch (error) {
+    if (error instanceof EventNotFound) return undefined;
+    throw error;
+  }
+}
+export async function moveGoogleEvent(source: CalendarEvent, destinationCalendarId: string): Promise<CalendarEvent> {
+  const reason = moveUnavailableReason(source);
+  if (reason) throw new Error(reason);
+  const params = new URLSearchParams({ destination: destinationCalendarId, sendUpdates: 'all' });
+  const raw = await request<GoogleEvent>('calendars/' + encodeURIComponent(source.calendarId) + '/events/' + encodeURIComponent(source.id) + '/move?' + params,
+    { method: 'POST', headers: source.etag ? { 'If-Match': source.etag } : {} });
+  const result = fromGoogle(raw, destinationCalendarId);
+  if (!result) throw new OperationUncertain('移動結果を確認できません。');
+  return result;
 }

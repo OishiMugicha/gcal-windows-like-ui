@@ -23,6 +23,8 @@ interface EventBase {
   location?: string;
   color?: string;
   recurring?: boolean;
+  eventType?: string;
+  organizerSelf?: boolean;
   htmlLink?: string;
   etag?: string;
 }
