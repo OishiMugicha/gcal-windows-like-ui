@@ -8,3 +8,4 @@ test-results/
 *.log
 
 *.tsbuildinfo
+.openai/hosting.json

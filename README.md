@@ -1,36 +1,48 @@
 # Calendar 95
 
-Windows 95風の、個人用Google Calendarクライアントです。サイドバーを設けず、日・週・月カレンダーを大きく表示します。
+Windows 95風の、個人用Google Calendarクライアントです。日・週・月表示、深夜までの時間帯表示、予定の作成・編集に対応しています。日本語UI・日本時間（Asia/Tokyo）で動作します。
 
-## 開発環境
+React + TypeScript + Viteで構成した静的Webアプリで、独自のバックエンドやデータベースは不要です。
 
-この環境ではWSL Ubuntuの既存Node.js **24.20.0**（nvm）とnpm **11.19.0**を使用しています。Node.jsの追加インストールは行っていません。Gitリポジトリは `main` ブランチで管理しています。
+## サンプル表示とGoogle接続
 
-WSLターミナルで実行してください。
+起動すると架空の予定を使ったサンプルが表示されます。GoogleアカウントやOAuth設定なしで操作でき、変更は再読み込みでリセットされます。
+
+Google接続は個人利用向けです。自分のGoogle CloudプロジェクトとOAuthクライアントIDを設定して使います。作者の接続設定やカレンダーデータは配布しません。サイトやソースコードを公開しても、作者の予定が閲覧できるようにはなりません。
+
+## 開発環境・起動
+
+開発・検証はWSLのNode.jsで行います。Node.jsのバージョンは [`.nvmrc`](.nvmrc) を参照してください。以下はWSLにGitとnvmを導入済みの場合の手順です。
 
 ```bash
-cd ~/Projects/gcal-windows-like-ui
+git clone https://github.com/OishiMugicha/gcal-windows-like-ui.git
+cd gcal-windows-like-ui
 source ~/.nvm/nvm.sh
+nvm install
 nvm use
 npm ci
 npm run dev
 ```
 
-依存関係の導入後は `bash scripts/dev.sh` でも起動できます。
-開発URL: http://localhost:5173
+http://localhost:5173 を開きます。依存関係の導入後は `bash scripts/dev.sh` でも起動できます。
+
+## 検証
+
+WSLターミナルで実行します。
 
 ```bash
 npm test       # 日時計算・境界・重複配置のテスト
-npm run build # TypeScriptチェックと本番ビルド
+npm run build # TypeScriptチェックと本番ビルド（dist/）
 ```
 
-ブラウザテストは開発サーバーを起動した状態で実行します。この環境ではブラウザを追加インストールせず、Windows側の既存EdgeとNode.jsで実施しています。Windows PowerShellから:
+ブラウザテストを実行する場合は、WSLにPlaywright用Chromiumと必要なシステム依存関係を導入します。
 
-```powershell
-& '\\wsl$\Ubuntu\home\nagao\Projects\gcal-windows-like-ui\scripts\test-browser.ps1'
+```bash
+npx playwright install --with-deps chromium
+npm run dev
 ```
 
-別環境でPlaywrightのブラウザが導入済みなら `npm run test:e2e` を使えます。
+開発サーバーを起動したまま、別のWSLターミナルで同じディレクトリを開き、`nvm use` の後に `npm run test:e2e` を実行します。Google APIのテストは模擬APIを使用し、実際の予定を変更しません。
 
 ## 使い方
 
@@ -80,64 +92,35 @@ Google Cloudの設定はアカウント所有者が行います。クライア�
 
 参考: [Googleのトークン方式](https://developers.google.com/identity/oauth2/web/guides/use-token-model)、[繰り返し予定のAPI](https://developers.google.com/workspace/calendar/api/guides/recurringevents)。
 
-## 自分用に公開する（Cloudflare Pages）
+## 自分用にデプロイする（Cloudflare Pages）
 
-React + TypeScript + Viteの静的アプリです。`npm run build` の出力は `dist/` です。独自バックエンド・データベースは不要です。
-
-Cloudflare Pagesの無料枠で、標準の `https://<プロジェクト名>.pages.dev` に公開します。画面は誰でも開けますが、あなたの予定を取得するにはあなたのGoogle認証が必要です。未接続時はサンプルを表示します。
-
-### 1. GitHubのリポジトリを使う
-
-公開元は [OishiMugicha/gcal-windows-like-ui](https://github.com/OishiMugicha/gcal-windows-like-ui) の `main` ブランチです。非公開リポジトリのままでも連携できます。`dist/` やZIPをGitHubへ追加する必要はありません。
-
-`.env.local`、OAuthトークン、クライアントシークレット、個人の予定はコミットしません。クライアントIDは公開後の設定画面で入力できるため、ビルド時の環境変数設定は不要です。
-
-### 2. Cloudflare PagesとGitHubを連携する
-
-1. [Cloudflareダッシュボード](https://dash.cloudflare.com/)にログインします。
-2. **Workers & Pages → Create application** から **Pages** のGitリポジトリ接続を選びます。WorkersではなくPagesを選択してください。
-3. GitHubを接続し、CloudflareのGitHubアプリに `OishiMugicha/gcal-windows-like-ui` のアクセスを許可します。リポジトリを選んでセットアップへ進みます。
-4. 以下を設定し、**Save and Deploy** を押します。
+自分のリポジトリをCloudflare PagesのGit連携で接続し、次の設定でビルドします。手順は [CloudflareのGit連携ドキュメント](https://developers.cloudflare.com/pages/get-started/git-integration/) を参照してください。
 
 | 項目 | 設定値 |
 | --- | --- |
-| プロジェクト名 | `calendar95-personal`（使用済みなら別名） |
 | 本番ブランチ | `main` |
-| フレームワーク | Vite（なければNoneで下記を手入力） |
 | ビルドコマンド | `npm test && npm run build` |
 | ビルド出力ディレクトリ | `dist` |
-| ルートディレクトリ | 空欄（リポジトリのルート） |
-| 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`と同じ） |
+| ルートディレクトリ | リポジトリのルート |
+| 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`に合わせる） |
 
-5. ビルドが成功したら、発行された本番URLを控えます。
+OAuthクライアントIDはサイトの設定画面で入力できるため、ビルド環境への設定は任意です。`dist/` をコミットする必要はありません。
 
-以後、`main` へのpushでテスト・ビルド・本番公開が自動実行されます。GitHub ActionsやCloudflare APIトークンの追加は不要です。`public/_headers` はビルド時にコピーされ、Google認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などが適用されます。
+発行されたHTTPSオリジンを、Google Cloudの「承認済みのJavaScript生成元」に追加します。個人利用ではOAuthをExternal / Testingとし、自分だけをテストユーザーに登録します。別の端末やブラウザでは、クライアントIDの入力とGoogle認証が必要です。
 
-Direct Uploadで作成済みのプロジェクトがある場合は、Git連携用のPagesプロジェクトを新しく作成します。[CloudflareのGit連携手順](https://developers.cloudflare.com/pages/get-started/git-integration/)
+`public/_headers` はビルド時にコピーされ、PagesでGoogle認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などを設定します。他のホスティング先では、そのサービスの方法で同等のヘッダーを設定してください。
 
-### 3. 公開URLでGoogleに接続する
+公開後はPCとスマホで表示を確認し、未接続時にサンプルだけが表示されることを確認します。Google接続は自分の確認用カレンダーで取得・作成・変更・削除を試してください。
 
-1. 上の「Google Calendarを接続する」に従ってCalendar APIとOAuthクライアントを設定します。個人利用では **External / Testing** とし、自分のメールアドレスだけをテストユーザーに登録します。
-2. 「承認済みのJavaScript生成元」に、発行された本番URL（例: `https://calendar95-personal.pages.dev`）を追加します。パスや末尾の `/` は付けません。リダイレクトURIは不要です。
-3. 本番URLを開き、「設定 → Google接続設定」にクライアントIDを入力して適用します。
-4. 「Googleに接続」で自分のアカウントを選択し、カレンダーを選びます。別の端末やブラウザでもクライアントIDの入力とGoogle認証が必要です。
+Git連携では本番ブランチへのpushで再デプロイされます。変更前にテストとビルドを実行し、公開後はCloudflareのデプロイ結果を確認してください。
 
-### 4. 公開後の確認
+## 公開・データの取り扱い
 
-- PCとスマホでHTTPSの本番URLを開き、日・週・月表示を確認します。
-- シークレットウィンドウなど未接続のブラウザではサンプルだけが表示されることを確認します。
-- 自分のアカウントで接続し、実際のカレンダーが取得できることを確認します。
-- 自分の書き込み可能なカレンダーに動作確認用の予定を1件作成し、変更・削除します。Google Calendar側にも反映されることを確認します。
-- 再読み込み後にGoogleへ再接続できることを確認します。認証エラーは上の「エラー時」を参照してください。
-- ブラウザの開発者ツールで、HTMLレスポンスに上記の `Cross-Origin-Opener-Policy` ヘッダーがあることを確認します。
-
-### 更新する
-
-WSLのNode.jsで `npm test` と `npm run build` を実行してから、変更したソースを小さな単位でコミットし、`git push origin main` で反映します。Cloudflare PagesのDeploymentsでビルド・公開の成功を確認してください。本番URLが同じなら、Googleの生成元設定を変更する必要はありません。
-
-ビルドが失敗した場合はDeploymentsのログを確認し、修正して再度pushします。公開後に不具合が見つかった場合は、原因のコミットをrevertしてpushします。
-
-`.openai/hosting.json` は既存のSites用設定です。Cloudflare Pagesでは使用しません。
+- `.env.local`、OAuthトークン、クライアントシークレット、実際の予定やそのスクリーンショットをコミットしないでください。Issueやテスト結果に添付する場合も同様です。
+- `.env.example` は空の設定例です。`VITE_` で始まる環境変数はブラウザ向けビルドに含まれるため、秘密情報を設定しないでください。
+- OAuthクライアントIDは公開識別子です。このアプリではクライアントシークレットを使いません。
+- 予定とアクセストークンはメモリ内だけに保持します。表示設定・選択カレンダーのID・入力したOAuthクライアントIDはブラウザに保存します。
+- リポジトリを公開する前にGit履歴も確認してください。ファイルの削除や `.gitignore` への追加だけでは過去のコミットからは消えません。
 
 ## 構成と検証
 
@@ -150,3 +133,7 @@ WSLのNode.jsで `npm test` と `npm run build` を実行してから、変更�
 Google APIテストは模擬APIです。実アカウントでの認可と読み書きはクライアントID設定後に別途確認してください。
 
 WebMCP対応ブラウザでは表示時間帯設定用のツールも登録します。未対応ブラウザでは通常の設定画面だけを使います。
+
+## ライセンス
+
+[MIT License](LICENSE)。著作権表示とライセンス文を保持する条件で、改変・再配布・商用利用が可能です。
