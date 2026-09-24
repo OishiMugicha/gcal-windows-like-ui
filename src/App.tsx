@@ -8,7 +8,7 @@ import { useCalendarTools } from './useCalendarTools';
 import SettingsDialog from './SettingsDialog';
 import EventEditor, { draftFrom } from './EventEditor';
 import Modal from './Modal';
-import { ConnectionExpired, connectGoogle, deleteGoogleEvent, disconnectGoogle, loadCalendars, loadEvents, newEventId, prepareGoogle, saveGoogleEvent } from './google';
+import { ConnectionExpired, connectGoogle, deleteGoogleEvent, disconnectGoogle, loadCalendars, loadEvents, newEventId, prepareGoogle, restoreGoogle, saveGoogleEvent } from './google';
 const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
 const sameEvent = (a: CalendarEvent, b: CalendarEvent) => a.id === b.id && a.calendarId === b.calendarId;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '操作に失敗しました。';
@@ -32,6 +32,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [connectionVersion, setConnectionVersion] = useState(0);
   const [connecting, setConnecting] = useState(false);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const connectionAttempt = useRef(0);
   const [expired, setExpired] = useState(false);
   const [notice, setNotice] = useState('');
   const [listDay, setListDay] = useState<string | null>(null);
@@ -46,12 +48,18 @@ export default function App() {
   const clientId = settings.clientId || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
   useEffect(() => { if (clientId) prepareGoogle().catch(() => {}); }, [clientId]);
   useEffect(() => {
+    const state = restoreGoogle(clientId);
+    if (state === 'connected') void connect(true);
+    else if (state === 'expired') { setExpired(true); setError(new ConnectionExpired().message); }
+    return () => { connectionAttempt.current++; };
+  }, [clientId]);
+  useEffect(() => {
     try { localStorage.setItem('calendar95.settings', JSON.stringify(settings)); }
     catch { setNotice('設定を保存できません。このブラウザの保存領域を確認してください。'); }
   }, [settings]);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timer); }, [notice]);
   const refresh = useCallback(async () => {
-    if (mode !== 'google' || busyRef.current) return;
+    if (mode !== 'google' || busyRef.current || connecting) return;
     const requestId = ++revision.current;
     setLoading(true); setError('');
     try {
@@ -62,7 +70,7 @@ export default function App() {
       if (requestId !== revision.current) return;
       setError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true);
     } finally { if (requestId === revision.current) setLoading(false); }
-  }, [mode, selectedKey, range.start, range.end, connectionVersion]);
+  }, [mode, selectedKey, range.start, range.end, connectionVersion, connecting]);
   useEffect(() => { void refresh(); return () => { revision.current++; }; }, [refresh]);
   useEffect(() => {
     const handler = () => { if (document.visibilityState === 'visible') void refresh(); };
@@ -111,12 +119,18 @@ export default function App() {
     } catch (e) { setEditorError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  async function connect() {
+  async function connect(restore = false) {
     if (!clientId) { setShowSettings(true); setNotice('Google接続設定にOAuthクライアントIDを入力してください。'); return; }
-    setConnecting(true); setError(''); revision.current++;
+    const attempt = ++connectionAttempt.current;
+    setConnecting(true); setRestoreFailed(false); setError(''); revision.current++;
+    if (restore) { setCalendars([]); setEvents([]); }
+    let authenticated = restore;
     try {
-      await connectGoogle(clientId);
+      const persisted = restore || await connectGoogle(clientId);
+      authenticated = true;
+      if (attempt !== connectionAttempt.current) return;
       const list = await loadCalendars();
+      if (attempt !== connectionAttempt.current) return;
       setCalendars(list); setEvents([]); setMode('google'); setExpired(false);
       setSettings(current => {
         const saved = current.selectedCalendars.filter(id => list.some(c => c.id === id));
@@ -124,15 +138,22 @@ export default function App() {
       });
       setEditorError('');
       setConnectionVersion(v => v + 1);
-      setNotice('Google Calendarに接続しました。');
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setConnecting(false); }
+      setNotice(persisted ? 'Google Calendarに接続しました。' : '接続しましたが、接続情報を保存できません。次回は再接続が必要です。');
+    } catch (e) {
+      if (attempt !== connectionAttempt.current) return;
+      setError(errorMessage(e));
+      if (e instanceof ConnectionExpired) { setExpired(true); setRestoreFailed(false); }
+      else if (authenticated) setRestoreFailed(true);
+    }
+    finally { if (attempt === connectionAttempt.current) setConnecting(false); }
   }
   function disconnect() {
+    connectionAttempt.current++; setConnecting(false); setRestoreFailed(false); setDraft(null); setListDay(null);
     revision.current++; disconnectGoogle(); setMode('demo'); setCalendars(demoCalendars); setEvents(demoEvents());
     setExpired(false); setLoading(false); setError(''); setDisconnectPrompt(false);
   }
   function applySettings(next: Settings) {
+    if ((next.clientId || import.meta.env.VITE_GOOGLE_CLIENT_ID || '') !== clientId) disconnect();
     if (mode === 'demo') {
       setDemoSelected(next.selectedCalendars); setSettings({ ...next, selectedCalendars: settings.selectedCalendars });
     } else setSettings(next);
@@ -150,12 +171,13 @@ export default function App() {
       <div className="view-buttons" aria-label="表示切替">{(['day', 'week', 'month'] as View[]).map((view, i) => <button key={view} className={settings.view === view ? 'pressed' : ''} aria-pressed={settings.view === view} onClick={() => selectView(view)}>{['日', '週', '月'][i]}</button>)}</div>
       <span className="toolbar-divider" /><button onClick={() => newDraft()} disabled={busy || connecting}>＋ 予定</button>
       <button onClick={() => setShowSettings(true)} disabled={busy}>設定</button>
-      {mode === 'google' && <button onClick={() => void refresh()} disabled={loading || busy || expired} aria-label="予定を更新">更新</button>}
+      {mode === 'google' && <button onClick={() => void refresh()} disabled={loading || busy || expired || connecting || restoreFailed} aria-label="予定を更新">更新</button>}
       {mode === 'demo' || expired ? <button onClick={() => void connect()} disabled={connecting || busy}>{connecting ? '接続中…' : expired ? '再接続' : 'Googleに接続'}</button>
         : <button onClick={() => setDisconnectPrompt(true)} disabled={busy}>接続解除</button>}
     </nav>
+    {restoreFailed && <div className="error-banner"><button onClick={() => void connect(true)} disabled={connecting}>接続の復元を再試行</button><button onClick={disconnect}>接続解除</button></div>}
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="エラーを閉じる">×</button></div>}
-    <section className="calendar-surface" aria-label="カレンダー" aria-busy={loading || busy}>
+    <section className="calendar-surface" aria-label="カレンダー" aria-busy={loading || busy || connecting}>
       {settings.view === 'month' ? <>
         <div className="month-weekdays" style={{ gridTemplateColumns: 'repeat(' + (settings.showWeekends ? 7 : 5) + ', 1fr)' }}>
           {days.slice(0, settings.showWeekends ? 7 : 5).map(day => <span key={day}>{weekdays[weekday(day)]}</span>)}</div>
@@ -177,11 +199,11 @@ export default function App() {
           return <div key={day} className="all-day-cell">{allDay.slice(0, 1).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="all-day-event" onClick={() => openEditor(e)}>{e.title}</button>)}
             {allDay.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{allDay.length - 1}件</button>}</div>;
         })}</div>
-        <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || loading} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
+        <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || loading || connecting} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
       </>}
       {!selected.length && <div className="empty-selection"><span>表示するカレンダーが選択されていません。</span><button onClick={() => setShowSettings(true)}>設定を開く</button></div>}
     </section>
-    <footer className="statusbar" aria-live="polite"><span>{loading ? '予定を取得中…' : busy ? '保存中…' : notice || (mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
+    <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading ? '予定を取得中…' : busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
     {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, clientId }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
     {draft && <EventEditor initial={draft} calendars={calendars} busy={busy || connecting} error={editorError} onReconnect={expired ? () => void connect() : undefined} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}

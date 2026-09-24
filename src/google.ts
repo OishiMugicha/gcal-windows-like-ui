@@ -7,6 +7,24 @@ interface GoogleIdentity { accounts: { oauth2: {
 declare global { interface Window { google?: GoogleIdentity; } }
 const scopes = ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events'];
 let token = '', expiresAt = 0;
+const connectionKey = 'calendar95.connection';
+let authVersion = 0;
+export function restoreGoogle(clientId: string): 'connected' | 'expired' | 'none' {
+  token = ''; expiresAt = 0;
+  try {
+    const raw = localStorage.getItem(connectionKey);
+    if (!raw) return 'none';
+    const saved = JSON.parse(raw);
+    if (!saved || saved.version !== 1 || !clientId || saved.clientId !== clientId ||
+      typeof saved.token !== 'string' || !saved.token.trim() ||
+      typeof saved.expiresAt !== 'number' || !Number.isFinite(saved.expiresAt)) {
+      disconnectGoogle(); return 'none';
+    }
+    if (saved.expiresAt <= Date.now()) { disconnectGoogle(); return 'expired'; }
+    token = saved.token; expiresAt = saved.expiresAt;
+    return 'connected';
+  } catch { disconnectGoogle(); return 'none'; }
+}
 let identityPromise: Promise<void> | undefined;
 export class ConnectionExpired extends Error {
   constructor() { super('Googleとの接続が切れました。「再接続」を押してください。'); }
@@ -24,33 +42,42 @@ export function prepareGoogle(): Promise<void> {
   });
   return identityPromise;
 }
-export function connectGoogle(clientId: string): Promise<void> {
+export function connectGoogle(clientId: string): Promise<boolean> {
   if (!window.google?.accounts.oauth2) return Promise.reject(new Error('Google認証を準備しています。少し待ってからもう一度押してください。'));
+  const version = ++authVersion;
   return new Promise((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
       client_id: clientId, scope: scopes.join(' '),
       callback: response => {
+        if (version !== authVersion) { reject(new Error('Google接続設定が変更されました。')); return; }
         if (response.error || !response.access_token) { reject(new Error('Googleへの接続が許可されませんでした。')); return; }
         const granted = new Set((response.scope || '').split(' '));
         if (!scopes.every(s => granted.has(s))) { reject(new Error('予定とカレンダー一覧へのアクセスを許可してください。')); return; }
         token = response.access_token;
         expiresAt = Date.now() + Math.max(0, (Number(response.expires_in) || 3600) - 30) * 1000;
-        resolve();
+        try {
+          localStorage.setItem(connectionKey, JSON.stringify({ version: 1, clientId, token, expiresAt }));
+          resolve(true);
+        } catch { resolve(false); }
       },
       error_callback: e => reject(new Error(e.type === 'popup_closed' ? 'Googleへの接続をキャンセルしました。' : '認証画面を開けません。ポップアップを許可してください。')),
     });
     client.requestAccessToken({ prompt: '' });
   });
 }
-export function disconnectGoogle() { token = ''; expiresAt = 0; }
+export function disconnectGoogle() {
+  authVersion++; token = ''; expiresAt = 0;
+  try { localStorage.removeItem(connectionKey); } catch { /* Storage may be unavailable. */ }
+}
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  if (!token || Date.now() >= expiresAt) throw new ConnectionExpired();
+  if (!token || Date.now() >= expiresAt) { disconnectGoogle(); throw new ConnectionExpired(); }
+  const requestToken = token;
   let response: Response;
   try {
     response = await fetch('https://www.googleapis.com/calendar/v3/' + path, { ...init, signal: AbortSignal.timeout(25_000),
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...init.headers } });
   } catch { throw new Error(init.method ? '保存結果を確認できません。二重登録を防ぐため、再試行の前に更新して予定を確認してください。' : '予定を取得できません。通信環境を確認して再試行してください。'); }
-  if (response.status === 401) { disconnectGoogle(); throw new ConnectionExpired(); }
+  if (response.status === 401) { if (token === requestToken) disconnectGoogle(); throw new ConnectionExpired(); }
   if (response.status === 412) throw new Error('この予定は別の場所で変更されています。一度閉じて更新してから編集してください。');
   if (response.status === 403) throw new Error('操作の権限がないか、APIの利用制限に達しています。カレンダーの権限とGoogle Cloud設定を確認してください。');
   if (response.status === 404 || response.status === 410) throw new Error('予定が見つかりません。一度閉じてカレンダーを更新してください。');
