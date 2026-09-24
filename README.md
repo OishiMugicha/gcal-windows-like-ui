@@ -80,13 +80,64 @@ Google Cloudの設定はアカウント所有者が行います。クライア�
 
 参考: [Googleのトークン方式](https://developers.google.com/identity/oauth2/web/guides/use-token-model)、[繰り返し予定のAPI](https://developers.google.com/workspace/calendar/api/guides/recurringevents)。
 
-## 公開
+## 自分用に公開する（Cloudflare Pages）
 
 React + TypeScript + Viteの静的アプリです。`npm run build` の出力は `dist/` です。独自バックエンド・データベースは不要です。
 
-このプロジェクトにはSites用のホスティング設定を追加しています。公開URLのオリジンをGoogle Cloudに登録した後、同じクライアントIDをサイトの設定に入力できます。
+Cloudflare Pagesの無料枠で、標準の `https://<プロジェクト名>.pages.dev` に公開します。画面は誰でも開けますが、あなたの予定を取得するにはあなたのGoogle認証が必要です。未接続時はサンプルを表示します。
 
-Cloudflare Pagesへ直接移す場合は、ビルドコマンド `npm run build`、出力ディレクトリ `dist`、Node.js 24を指定します。自分専用運用ではOAuthのテストユーザーを自分に限定します。
+### 1. GitHubのリポジトリを使う
+
+公開元は [OishiMugicha/gcal-windows-like-ui](https://github.com/OishiMugicha/gcal-windows-like-ui) の `main` ブランチです。非公開リポジトリのままでも連携できます。`dist/` やZIPをGitHubへ追加する必要はありません。
+
+`.env.local`、OAuthトークン、クライアントシークレット、個人の予定はコミットしません。クライアントIDは公開後の設定画面で入力できるため、ビルド時の環境変数設定は不要です。
+
+### 2. Cloudflare PagesとGitHubを連携する
+
+1. [Cloudflareダッシュボード](https://dash.cloudflare.com/)にログインします。
+2. **Workers & Pages → Create application** から **Pages** のGitリポジトリ接続を選びます。WorkersではなくPagesを選択してください。
+3. GitHubを接続し、CloudflareのGitHubアプリに `OishiMugicha/gcal-windows-like-ui` のアクセスを許可します。リポジトリを選んでセットアップへ進みます。
+4. 以下を設定し、**Save and Deploy** を押します。
+
+| 項目 | 設定値 |
+| --- | --- |
+| プロジェクト名 | `calendar95-personal`（使用済みなら別名） |
+| 本番ブランチ | `main` |
+| フレームワーク | Vite（なければNoneで下記を手入力） |
+| ビルドコマンド | `npm test && npm run build` |
+| ビルド出力ディレクトリ | `dist` |
+| ルートディレクトリ | 空欄（リポジトリのルート） |
+| 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`と同じ） |
+
+5. ビルドが成功したら、発行された本番URLを控えます。
+
+以後、`main` へのpushでテスト・ビルド・本番公開が自動実行されます。GitHub ActionsやCloudflare APIトークンの追加は不要です。`public/_headers` はビルド時にコピーされ、Google認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などが適用されます。
+
+Direct Uploadで作成済みのプロジェクトがある場合は、Git連携用のPagesプロジェクトを新しく作成します。[CloudflareのGit連携手順](https://developers.cloudflare.com/pages/get-started/git-integration/)
+
+### 3. 公開URLでGoogleに接続する
+
+1. 上の「Google Calendarを接続する」に従ってCalendar APIとOAuthクライアントを設定します。個人利用では **External / Testing** とし、自分のメールアドレスだけをテストユーザーに登録します。
+2. 「承認済みのJavaScript生成元」に、発行された本番URL（例: `https://calendar95-personal.pages.dev`）を追加します。パスや末尾の `/` は付けません。リダイレクトURIは不要です。
+3. 本番URLを開き、「設定 → Google接続設定」にクライアントIDを入力して適用します。
+4. 「Googleに接続」で自分のアカウントを選択し、カレンダーを選びます。別の端末やブラウザでもクライアントIDの入力とGoogle認証が必要です。
+
+### 4. 公開後の確認
+
+- PCとスマホでHTTPSの本番URLを開き、日・週・月表示を確認します。
+- シークレットウィンドウなど未接続のブラウザではサンプルだけが表示されることを確認します。
+- 自分のアカウントで接続し、実際のカレンダーが取得できることを確認します。
+- 自分の書き込み可能なカレンダーに動作確認用の予定を1件作成し、変更・削除します。Google Calendar側にも反映されることを確認します。
+- 再読み込み後にGoogleへ再接続できることを確認します。認証エラーは上の「エラー時」を参照してください。
+- ブラウザの開発者ツールで、HTMLレスポンスに上記の `Cross-Origin-Opener-Policy` ヘッダーがあることを確認します。
+
+### 更新する
+
+WSLのNode.jsで `npm test` と `npm run build` を実行してから、変更したソースを小さな単位でコミットし、`git push origin main` で反映します。Cloudflare PagesのDeploymentsでビルド・公開の成功を確認してください。本番URLが同じなら、Googleの生成元設定を変更する必要はありません。
+
+ビルドが失敗した場合はDeploymentsのログを確認し、修正して再度pushします。公開後に不具合が見つかった場合は、原因のコミットをrevertしてpushします。
+
+`.openai/hosting.json` は既存のSites用設定です。Cloudflare Pagesでは使用しません。
 
 ## 構成と検証
 
