@@ -55,6 +55,16 @@ test('Google pagination, recurring instance update, failure recovery and reconne
   expire = false;
   await page.getByRole('button', { name: '再接続' }).click();
   await expect(page.getByRole('button', { name: /変更した今回分/ })).toBeVisible();
+  await page.getByRole('button', { name: /変更した今回分/ }).click();
+  await page.getByLabel('件名').fill('接続が切れても保持');
+  expire = true;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('button', { name: '入力を保持してGoogleに再接続' })).toBeVisible();
+  expire = false;
+  await page.getByRole('button', { name: '入力を保持してGoogleに再接続' }).click();
+  await expect(page.getByLabel('件名')).toHaveValue('接続が切れても保持');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   const localData = await page.evaluate(() => JSON.stringify(localStorage));
   expect(localData).not.toContain('fake-token');
   expect(localData).not.toContain('変更した今回分');

@@ -122,6 +122,7 @@ export default function App() {
         const saved = current.selectedCalendars.filter(id => list.some(c => c.id === id));
         return { ...current, selectedCalendars: saved.length ? saved : list.filter(c => c.primary).map(c => c.id) };
       });
+      setEditorError('');
       setConnectionVersion(v => v + 1);
       setNotice('Google Calendarに接続しました。');
     } catch (e) { setError(errorMessage(e)); }
@@ -183,7 +184,7 @@ export default function App() {
     <footer className="statusbar" aria-live="polite"><span>{loading ? '予定を取得中…' : busy ? '保存中…' : notice || (mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
     {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, clientId }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
-    {draft && <EventEditor initial={draft} calendars={calendars} busy={busy} error={editorError} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}
+    {draft && <EventEditor initial={draft} calendars={calendars} busy={busy || connecting} error={editorError} onReconnect={expired ? () => void connect() : undefined} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}
     {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} onClose={() => setListDay(null)}>
       <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}</div>
     </Modal>}

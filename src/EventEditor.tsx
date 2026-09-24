@@ -17,8 +17,8 @@ export function draftEvent(draft: EventDraft): CalendarEvent {
     ? { ...common, allDay: true, startDate, endDate: addDays(endDate, 1) }
     : { ...common, allDay: false, start: new Date(startDate + 'T' + startTime + ':00+09:00').toISOString(), end: new Date(endDate + 'T' + endTime + ':00+09:00').toISOString() };
 }
-export default function EventEditor({ initial, calendars, busy, error, onSave, onDelete, onClose }: {
-  initial: EventDraft; calendars: Calendar[]; busy: boolean; error: string;
+export default function EventEditor({ initial, calendars, busy, error, onSave, onDelete, onClose, onReconnect }: {
+  initial: EventDraft; calendars: Calendar[]; busy: boolean; error: string; onReconnect?: () => void;
   onSave: (event: CalendarEvent) => void; onDelete: (event: CalendarEvent) => void; onClose: () => void;
 }) {
   const [draft, setDraft] = useState(initial);
@@ -49,6 +49,7 @@ export default function EventEditor({ initial, calendars, busy, error, onSave, o
       <label className="field">説明<textarea rows={3} value={draft.description || ''} readOnly={readOnly} onChange={e => patch({ description: e.target.value })} /></label>
       {!valid && <p className="error-text" role="alert">終了日時は開始日時より後にしてください。</p>}
       {error && <p className="error-text" role="alert">{error}</p>}
+      {onReconnect && <button type="button" disabled={busy} onClick={onReconnect}>入力を保持してGoogleに再接続</button>}
       {draft.htmlLink && <a href={draft.htmlLink} target="_blank" rel="noreferrer">Google Calendarで開く ↗</a>}
       {readOnly && <p className="notice">このカレンダーは読み取り専用です。</p>}
       {confirmDelete && <div className="delete-confirm" role="alert">
