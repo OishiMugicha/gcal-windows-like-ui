@@ -4,6 +4,7 @@ import { addDays, atMinute, dateKey, isOnDay, rangeFor, readSettings, timeLabel,
 import { demoCalendars, demoEvents } from './demo';
 import type { Calendar, CalendarEvent, EventDraft, Settings, View } from './types';
 import TimeGrid from './TimeGrid';
+import { useCalendarTools } from './useCalendarTools';
 import SettingsDialog from './SettingsDialog';
 import EventEditor, { draftFrom } from './EventEditor';
 import Modal from './Modal';
@@ -17,6 +18,7 @@ const initialSettings = () => {
 };
 export default function App() {
   const [settings, setSettings] = useState<Settings>(initialSettings);
+  useCalendarTools(setSettings);
   const [anchor, setAnchor] = useState(dateKey());
   const [mode, setMode] = useState<'demo' | 'google'>('demo');
   const [calendars, setCalendars] = useState<Calendar[]>(demoCalendars);
