@@ -45,7 +45,7 @@ export default function App() {
   const range = rangeFor(days, settings);
   const filtered = events.filter(e => selected.includes(e.calendarId));
   const gridStyle = { gridTemplateColumns: '58px repeat(' + days.length + ', minmax(0, 1fr))' };
-  const clientId = settings.clientId || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+  const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
   useEffect(() => { if (clientId) prepareGoogle().catch(() => {}); }, [clientId]);
   useEffect(() => {
     const state = restoreGoogle(clientId);
@@ -120,7 +120,7 @@ export default function App() {
     finally { busyRef.current = false; setBusy(false); }
   }
   async function connect(restore = false) {
-    if (!clientId) { setShowSettings(true); setNotice('Google接続設定にOAuthクライアントIDを入力してください。'); return; }
+    if (!clientId) { setNotice('Google接続はまだ設定されていません。サイトの管理者にお問い合わせください。'); return; }
     const attempt = ++connectionAttempt.current;
     setConnecting(true); setRestoreFailed(false); setError(''); revision.current++;
     if (restore) { setCalendars([]); setEvents([]); }
@@ -153,7 +153,6 @@ export default function App() {
     setExpired(false); setLoading(false); setError(''); setDisconnectPrompt(false);
   }
   function applySettings(next: Settings) {
-    if ((next.clientId || import.meta.env.VITE_GOOGLE_CLIENT_ID || '') !== clientId) disconnect();
     if (mode === 'demo') {
       setDemoSelected(next.selectedCalendars); setSettings({ ...next, selectedCalendars: settings.selectedCalendars });
     } else setSettings(next);
@@ -205,7 +204,7 @@ export default function App() {
     </section>
     <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading ? '予定を取得中…' : busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
-    {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, clientId }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
+    {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
     {draft && <EventEditor initial={draft} calendars={calendars} busy={busy || connecting} error={editorError} onReconnect={expired ? () => void connect() : undefined} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}
     {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} onClose={() => setListDay(null)}>
       <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}</div>

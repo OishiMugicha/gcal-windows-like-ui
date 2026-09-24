@@ -36,10 +36,6 @@ export default function SettingsDialog({ initial, calendars, onSave, onClose }: 
           <span className="calendar-color" style={{ background: c.color }} />{c.title}{!c.writable && <small>（閲覧のみ）</small>}</label>)}
         {!value.selectedCalendars.length && <p className="field-note">カレンダーが未選択のため、予定は表示されません。</p>}
       </fieldset>
-      <details className="connection-settings"><summary>Google接続設定</summary>
-        <label className="field">OAuthクライアントID<input placeholder="…apps.googleusercontent.com" value={value.clientId} onChange={e => patch({ clientId: e.target.value.trim() })} /></label>
-        <p className="field-note">Google Cloudで発行したWebアプリ用IDです。設定手順はプロジェクトのREADMEを参照してください。</p>
-      </details>
       <div className="dialog-actions"><button type="button" onClick={onClose}>キャンセル</button><button className="default-button" disabled={!valid}>適用</button></div>
     </form>
   </Modal>;

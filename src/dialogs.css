@@ -23,7 +23,5 @@ legend { padding: 0 5px; }
 .delete-confirm { border: 1px solid #9c4444; padding: 10px; background: #e8dada; }
 .delete-confirm button { margin: 8px 8px 0 0; }
 .calendar-color { width: 12px; height: 12px; border: 1px solid #0004; flex-shrink: 0; }
-.connection-settings summary { cursor: pointer; padding: 5px 0; }
-.connection-settings .field { margin-top: 8px; }
 .agenda-item { text-align: left; border-left: 4px solid var(--event-color); background: white; padding: 10px; line-height: 1.6; }
 .agenda-item span { display: inline-block; min-width: 60px; color: #555; margin-right: 12px; }

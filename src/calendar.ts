@@ -3,7 +3,7 @@ export const ZONE = 'Asia/Tokyo';
 export const MINUTE = 60_000;
 export const defaults: Settings = {
   startMinute: 480, endMinute: 1560, weekStartsOn: 1,
-  showWeekends: true, view: 'week', selectedCalendars: [], clientId: '',
+  showWeekends: true, view: 'week', selectedCalendars: [],
 };
 export const pad = (n: number) => String(n).padStart(2, '0');
 export function dateKey(date: Date = new Date()): string {
@@ -96,7 +96,6 @@ export function validateSettings(value: Partial<Settings>): Settings {
     showWeekends: value.showWeekends !== false,
     view: ['day', 'week', 'month'].includes(value.view ?? '') ? value.view! : 'week',
     selectedCalendars: Array.isArray(value.selectedCalendars) ? value.selectedCalendars.filter(x => typeof x === 'string') : [],
-    clientId: typeof value.clientId === 'string' ? value.clientId : '',
   };
 }
 export function readSettings(): Settings {

@@ -8,7 +8,7 @@ React + TypeScript + Viteで構成した静的Webアプリで、独自のバッ�
 
 起動すると架空の予定を使ったサンプルが表示されます。GoogleアカウントやOAuth設定なしで操作でき、変更は再読み込みでリセットされます。
 
-Google接続は個人利用向けです。自分のGoogle CloudプロジェクトとOAuthクライアントIDを設定して使います。作者の接続設定やカレンダーデータは配布しません。サイトやソースコードを公開しても、作者の予定が閲覧できるようにはなりません。
+Google接続は個人利用向けです。サイトの運営者が接続設定を行い、利用者は自分のGoogleアカウントで認証して使います。サイトやソースコードを公開しても、作者の予定が閲覧できるようにはなりません。
 
 ## 開発環境・起動
 
@@ -39,10 +39,10 @@ npm run build # TypeScriptチェックと本番ビルド（dist/）
 
 ```bash
 npx playwright install --with-deps chromium
-npm run dev
+npm run test:e2e
 ```
 
-開発サーバーを起動したまま、別のWSLターミナルで同じディレクトリを開き、`nvm use` の後に `npm run test:e2e` を実行します。Google APIのテストは模擬APIを使用し、実際の予定を変更しません。
+テスト専用サーバーは自動起動します（ポート5174・5175）。ダミーのクライアントIDを設定した環境と、未設定の環境を検証するため、実際のIDは不要です。Google APIのテストは模擬APIを使用し、実際の予定を変更しません。
 
 ## 使い方
 
@@ -62,21 +62,11 @@ npm run dev
 
 ## Google Calendarを接続する
 
-Google Cloudの設定はアカウント所有者が行います。クライアントシークレットはこのアプリでは使用しません。
+1. 「Googleに接続」を押し、使用するアカウントを選択します。
+2. カレンダー一覧と予定へのアクセスを許可します。
+3. 接続後、「設定」で表示するカレンダーを選択します。共有の読み取り専用カレンダーは閲覧のみです。
 
-1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成または選択します。
-2. 「APIとサービス」から **Google Calendar API** を有効にします。
-3. 「Google Auth Platform」でアプリ名・サポート用メールなどを設定します。個人利用なら対象をExternal、公開状態をTestingとし、自分のGoogleメールアドレスをテストユーザーに追加します。組織アカウントでは管理者の制限に従ってください。
-4. データアクセスのスコープに以下を追加します。
-   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
-   - `https://www.googleapis.com/auth/calendar.events`
-5. 「クライアント」から種類 **ウェブアプリケーション** のOAuthクライアントIDを作成します。
-6. 「承認済みのJavaScript生成元」に `http://localhost:5173` と、公開後のサイトのHTTPSオリジンを登録します。パスや末尾のスラッシュは付けません。このトークン方式ではリダイレクトURIを使用しません。
-7. サイトの「設定 → Google接続設定」に、末尾が `.apps.googleusercontent.com` のクライアントIDを入力し、「適用」します。
-8. 「Googleに接続」を押し、使用するアカウントを選択して、カレンダー一覧と予定へのアクセスを許可します。
-9. 接続後、「設定」で表示するカレンダーを選択します。共有の読み取り専用カレンダーは閲覧のみです。
-
-クライアントIDを開発環境に設定する方法もあります。`.env.example` を `.env.local` にコピーし、`VITE_GOOGLE_CLIENT_ID` を設定して開発サーバーを再起動します。クライアントIDは公開識別子ですが、アクセストークンやクライアントシークレットは記入しないでください。
+クライアントIDの入力は不要です。「Google接続はまだ設定されていません」と表示される場合は、サイトの管理者にお問い合わせください。
 
 接続成功時にアクセストークン・有効期限・OAuthクライアントIDを同じサイトのlocalStorageに自動保存します。同じブラウザでの再読み込みや開き直し時には、有効期限内なら認証操作なしで接続を復元します。有効期限の30秒前からは再接続が必要です。自動更新は行わないため、翌日以降の接続は保証しません。保存領域が使えない場合はその画面内だけで接続を維持します。期限切れ時に入力中の予定がある場合は、編集画面内の「入力を保持してGoogleに再接続」で接続を回復してから保存できます。バックグラウンドの自動同期・オフライン編集は行いません。
 
@@ -92,6 +82,25 @@ Google Cloudの設定はアカウント所有者が行います。クライア�
 
 参考: [Googleのトークン方式](https://developers.google.com/identity/oauth2/web/guides/use-token-model)、[繰り返し予定のAPI](https://developers.google.com/workspace/calendar/api/guides/recurringevents)。
 
+## Google接続の設定（運営・開発者向け）
+
+Google Cloudと環境変数の設定はサイトの運営・開発者が行います。クライアントシークレットはこのアプリでは使用しません。
+
+1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成または選択します。
+2. 「APIとサービス」から **Google Calendar API** を有効にします。
+3. 「Google Auth Platform」でアプリ名・サポート用メールなどを設定します。個人利用なら対象をExternal、公開状態をTestingとし、自分のGoogleメールアドレスをテストユーザーに追加します。組織アカウントでは管理者の制限に従ってください。
+4. データアクセスのスコープに以下を追加します。
+   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
+   - `https://www.googleapis.com/auth/calendar.events`
+5. 「クライアント」から種類 **ウェブアプリケーション** のOAuthクライアントIDを作成します。
+6. 「承認済みのJavaScript生成元」に `http://localhost:5173` と、公開後のサイトのHTTPSオリジンを登録します。パスや末尾のスラッシュは付けません。このトークン方式ではリダイレクトURIを使用しません。
+7. `.env.example` を `.env.local` にコピーし、`VITE_GOOGLE_CLIENT_ID` に発行したクライアントID（末尾が `.apps.googleusercontent.com`）を設定します。
+8. 開発サーバーを再起動します。
+
+クライアントIDは環境変数からのみ取得します。以前ブラウザに保存した設定のIDは使用しません。未設定でもサンプル表示は利用できます。
+
+公開環境では、ビルド環境の `VITE_GOOGLE_CLIENT_ID` に設定してください。値はブラウザ向けビルドに含まれるため、変更時には再ビルド・再デプロイが必要です。クライアントIDは公開識別子ですが、アクセストークンやクライアントシークレットは記入しないでください。
+
 ## 自分用にデプロイする（Cloudflare Pages）
 
 自分のリポジトリをCloudflare PagesのGit連携で接続し、次の設定でビルドします。手順は [CloudflareのGit連携ドキュメント](https://developers.cloudflare.com/pages/get-started/git-integration/) を参照してください。
@@ -102,11 +111,11 @@ Google Cloudの設定はアカウント所有者が行います。クライア�
 | ビルドコマンド | `npm test && npm run build` |
 | ビルド出力ディレクトリ | `dist` |
 | ルートディレクトリ | リポジトリのルート |
-| 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`に合わせる） |
+| 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`に合わせる）、`VITE_GOOGLE_CLIENT_ID`（Google接続用） |
 
-OAuthクライアントIDはサイトの設定画面で入力できるため、ビルド環境への設定は任意です。`dist/` をコミットする必要はありません。
+Google接続を利用する場合は、ビルド前に `VITE_GOOGLE_CLIENT_ID` を設定します。`dist/` をコミットする必要はありません。
 
-発行されたHTTPSオリジンを、Google Cloudの「承認済みのJavaScript生成元」に追加します。個人利用ではOAuthをExternal / Testingとし、自分だけをテストユーザーに登録します。別の端末やブラウザでは、クライアントIDの入力とGoogle認証が必要です。
+発行されたHTTPSオリジンを、Google Cloudの「承認済みのJavaScript生成元」に追加します。個人利用ではOAuthをExternal / Testingとし、自分だけをテストユーザーに登録します。別の端末やブラウザでは、Google認証が必要です。
 
 `public/_headers` はビルド時にコピーされ、PagesでGoogle認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などを設定します。他のホスティング先では、そのサービスの方法で同等のヘッダーを設定してください。
 
@@ -119,7 +128,7 @@ Git連携では本番ブランチへのpushで再デプロイされます。変�
 - `.env.local`、OAuthトークン、クライアントシークレット、実際の予定やそのスクリーンショットをコミットしないでください。Issueやテスト結果に添付する場合も同様です。
 - `.env.example` は空の設定例です。`VITE_` で始まる環境変数はブラウザ向けビルドに含まれるため、秘密情報を設定しないでください。
 - OAuthクライアントIDは公開識別子です。このアプリではクライアントシークレットを使いません。
-- 予定はメモリ内だけに保持します。アクセストークンはlocalStorageにも保存され、同じサイトのJavaScriptから参照可能です。接続解除・クライアントID変更・期限切れ検出・APIの401応答時に保存した認証情報を削除します。表示設定・選択カレンダーのID・入力したOAuthクライアントIDはブラウザに保存します。
+- 予定はメモリ内だけに保持します。アクセストークンはlocalStorageにも保存され、同じサイトのJavaScriptから参照可能です。接続解除・起動時のクライアントID不一致・期限切れ検出・APIの401応答時に保存した認証情報を削除します。表示設定・選択カレンダーのIDはブラウザに保存します。OAuthクライアントIDは接続情報の整合性確認用としてトークンと一緒に保存します。
 - リポジトリを公開する前にGit履歴も確認してください。ファイルの削除や `.gitignore` への追加だけでは過去のコミットからは消えません。
 
 ## 構成と検証

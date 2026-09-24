@@ -2,10 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 const scope = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
 async function mockGoogle(page: Page) {
   await page.clock.install({ time: new Date('2026-09-24T03:00:00Z') });
-  await page.addInitScript(() => localStorage.setItem('calendar95.settings', JSON.stringify({ clientId: 'test.apps.googleusercontent.com' })));
   await page.route('https://accounts.google.com/gsi/client', route => route.fulfill({
     contentType: 'application/javascript',
-    body: 'window.google={accounts:{oauth2:{initTokenClient: c => ({requestAccessToken:()=>c.callback({access_token:"fake-token",expires_in:3600,scope:' + JSON.stringify(scope) + '})})}}};',
+    body: 'window.google={accounts:{oauth2:{initTokenClient: c => {if(c.client_id!=="test.apps.googleusercontent.com")throw new Error("Unexpected client ID");return ({requestAccessToken:()=>c.callback({access_token:"fake-token",expires_in:3600,scope:' + JSON.stringify(scope) + '})});}}}};',
   }));
 }
 const instance = { id: 'instance1', recurringEventId: 'master1', summary: '深夜の繰り返し', etag: '"v1"',
@@ -183,40 +182,27 @@ test('unavailable storage still allows connection in memory', async ({ page }) =
   expect(await page.evaluate(() => localStorage.getItem('calendar95.connection'))).toBeNull();
 });
 
-test('changing client ID clears the saved connection', async ({ page }) => {
+test('legacy client ID is ignored and display settings preserve the connection', async ({ page }) => {
   await mockGoogle(page); await mockCalendar(page);
+  await page.addInitScript(() => localStorage.setItem('calendar95.settings', JSON.stringify({
+    clientId: 'legacy.apps.googleusercontent.com', startMinute: 540, endMinute: 1200,
+  })));
   await page.goto('/');
   await page.getByRole('button', { name: 'Googleに接続' }).click();
-  await expect(page.getByRole('button', { name: /深夜の繰り返し/ })).toBeVisible();
-  await page.getByRole('button', { name: '設定', exact: true }).click();
-  await page.getByText('Google接続設定', { exact: true }).click();
-  await page.getByLabel('OAuthクライアントID').fill('changed.apps.googleusercontent.com');
-  await page.getByRole('button', { name: '適用' }).click();
-  await expect(page.getByRole('button', { name: 'Googleに接続' })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('calendar95.connection'))).toBeNull();
-});
-
-test('a pending restoration cannot undo a client ID change', async ({ page }) => {
-  await mockGoogle(page); await mockCalendar(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Googleに接続' }).click();
-  await expect(page.getByRole('button', { name: /深夜の繰り返し/ })).toBeVisible();
-  let release!: () => void;
-  const pending = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/users/me/calendarList?*', async route => {
-    await pending;
-    await route.fulfill({ json: { items: [{ id: 'main', primary: true, accessRole: 'owner' }] } });
-  });
-  await page.reload();
-  await expect(page.getByRole('button', { name: '接続中…' })).toBeVisible();
-  await page.getByRole('button', { name: '設定', exact: true }).click();
-  await page.getByText('Google接続設定', { exact: true }).click();
-  await page.getByLabel('OAuthクライアントID').fill('changed.apps.googleusercontent.com');
-  await page.getByRole('button', { name: '適用' }).click();
-  release();
-  await expect(page.getByRole('button', { name: 'Googleに接続' })).toBeVisible();
   await expect(page.getByRole('button', { name: /深夜の繰り返し/ })).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('calendar95.connection'))).toBeNull();
+  await expect(page.getByRole('button', { name: '接続解除', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '設定', exact: true }).click();
+  await expect(page.getByText('Google接続設定', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('OAuthクライアントID')).toHaveCount(0);
+  await expect(page.getByLabel('上端（開始）')).toHaveValue('540');
+  await page.getByRole('button', { name: '適用' }).click();
+  await expect(page.getByRole('button', { name: '接続解除', exact: true })).toBeVisible();
+  const saved = await page.evaluate(() => ({
+    settings: JSON.parse(localStorage.getItem('calendar95.settings')!),
+    connection: JSON.parse(localStorage.getItem('calendar95.connection')!),
+  }));
+  expect(saved.settings).not.toHaveProperty('clientId');
+  expect(saved.connection.clientId).toBe('test.apps.googleusercontent.com');
 });
 
 test('token expiration during use clears storage and offers reconnect', async ({ page }) => {
