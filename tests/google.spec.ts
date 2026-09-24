@@ -1,0 +1,102 @@
+import { test, expect, type Page } from '@playwright/test';
+const scope = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
+async function mockGoogle(page: Page) {
+  await page.clock.install({ time: new Date('2026-09-24T03:00:00Z') });
+  await page.addInitScript(() => localStorage.setItem('calendar95.settings', JSON.stringify({ clientId: 'test.apps.googleusercontent.com' })));
+  await page.route('https://accounts.google.com/gsi/client', route => route.fulfill({
+    contentType: 'application/javascript',
+    body: 'window.google={accounts:{oauth2:{initTokenClient: c => ({requestAccessToken:()=>c.callback({access_token:"fake-token",expires_in:3600,scope:' + JSON.stringify(scope) + '})})}}};',
+  }));
+}
+const instance = { id: 'instance1', recurringEventId: 'master1', summary: '深夜の繰り返し', etag: '"v1"',
+  start: { dateTime: '2026-09-22T01:00:00+09:00' }, end: { dateTime: '2026-09-22T01:30:00+09:00' } };
+test('Google pagination, recurring instance update, failure recovery and reconnection', async ({ page }) => {
+  await mockGoogle(page);
+  let stored = { ...instance }, failPatch = false, expire = false;
+  const patches: { url: string; body: Record<string, unknown>; etag?: string }[] = [];
+  const fetchedPages: string[] = [];
+  await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+    const req = route.request(), url = new URL(req.url());
+    if (expire) { await route.fulfill({ status: 401, json: {} }); return; }
+    if (url.pathname.endsWith('/calendarList')) {
+      await route.fulfill({ json: { items: [{ id: 'main@example.com', summary: '仕事', accessRole: 'owner', primary: true }] } }); return;
+    }
+    if (req.method() === 'PATCH') {
+      patches.push({ url: url.pathname, body: req.postDataJSON(), etag: req.headers()['if-match'] });
+      if (failPatch) { await route.fulfill({ status: 503, json: {} }); return; }
+      stored = { ...stored, ...req.postDataJSON(), etag: '"v2"' };
+      await route.fulfill({ json: stored }); return;
+    }
+    fetchedPages.push(url.searchParams.get('pageToken') || 'first');
+    expect(url.searchParams.get('singleEvents')).toBe('true');
+    await route.fulfill({ json: url.searchParams.has('pageToken') ? { items: [stored] } : { items: [], nextPageToken: 'second' } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Googleに接続' }).click();
+  await expect(page.getByRole('button', { name: /深夜の繰り返し/ })).toBeVisible();
+  expect(fetchedPages).toContain('second');
+  await page.getByRole('button', { name: /深夜の繰り返し/ }).click();
+  await expect(page.getByText('繰り返し予定の、この1回だけを変更します。')).toBeVisible();
+  await expect(page.getByLabel('開始日', { exact: true })).toHaveValue('2026-09-22');
+  await page.getByLabel('件名').fill('変更した今回分');
+  failPatch = true;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('503');
+  await expect(page.getByLabel('件名')).toHaveValue('変更した今回分');
+  failPatch = false;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(patches[1].url).toContain('/events/instance1');
+  expect(patches[1].body).not.toHaveProperty('recurrence');
+  expect(patches[1].etag).toBe('"v1"');
+  expire = true;
+  await page.getByRole('button', { name: '予定を更新' }).click();
+  await expect(page.getByRole('button', { name: '再接続' })).toBeVisible();
+  expire = false;
+  await page.getByRole('button', { name: '再接続' }).click();
+  await expect(page.getByRole('button', { name: /変更した今回分/ })).toBeVisible();
+  const localData = await page.evaluate(() => JSON.stringify(localStorage));
+  expect(localData).not.toContain('fake-token');
+  expect(localData).not.toContain('変更した今回分');
+});
+test('create retries use a stable id so an uncertain response cannot duplicate an event', async ({ page }) => {
+  await mockGoogle(page);
+  const ids: string[] = [];
+  await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+    const req = route.request();
+    if (req.url().includes('/calendarList')) {
+      await route.fulfill({ json: { items: [{ id: 'main', summary: '個人', accessRole: 'owner', primary: true }] } }); return;
+    }
+    if (req.method() === 'POST') {
+      ids.push(req.postDataJSON().id);
+      if (ids.length === 1) await route.abort();
+      else await route.fulfill({ status: 409, json: {} });
+      return;
+    }
+    await route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Googleに接続' }).click();
+  await expect(page.getByRole('button', { name: '接続解除' })).toBeVisible();
+  await page.getByRole('button', { name: '＋ 予定' }).click();
+  await page.getByLabel('件名').fill('ネットワークエラー');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('保存結果を確認できません');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('すでに保存されています');
+  expect(ids).toHaveLength(2); expect(ids[0]).toBe(ids[1]);
+});
+test('read-only calendars cannot be edited', async ({ page }) => {
+  await mockGoogle(page);
+  await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+    if (route.request().url().includes('/calendarList')) {
+      await route.fulfill({ json: { items: [{ id: 'readonly', summary: '共有', accessRole: 'reader', primary: true }] } }); return;
+    }
+    await route.fulfill({ json: { items: [instance] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Googleに接続' }).click();
+  await page.getByRole('button', { name: /深夜の繰り返し/ }).click();
+  await expect(page.getByText('このカレンダーは読み取り専用です。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
+});

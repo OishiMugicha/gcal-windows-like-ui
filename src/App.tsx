@@ -28,6 +28,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [connectionVersion, setConnectionVersion] = useState(0);
   const [connecting, setConnecting] = useState(false);
   const [expired, setExpired] = useState(false);
   const [notice, setNotice] = useState('');
@@ -59,7 +60,7 @@ export default function App() {
       if (requestId !== revision.current) return;
       setError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true);
     } finally { if (requestId === revision.current) setLoading(false); }
-  }, [mode, selectedKey, range.start, range.end]);
+  }, [mode, selectedKey, range.start, range.end, connectionVersion]);
   useEffect(() => { void refresh(); return () => { revision.current++; }; }, [refresh]);
   useEffect(() => {
     const handler = () => { if (document.visibilityState === 'visible') void refresh(); };
@@ -110,7 +111,7 @@ export default function App() {
   }
   async function connect() {
     if (!clientId) { setShowSettings(true); setNotice('Google接続設定にOAuthクライアントIDを入力してください。'); return; }
-    setConnecting(true); setError('');
+    setConnecting(true); setError(''); revision.current++;
     try {
       await connectGoogle(clientId);
       const list = await loadCalendars();
@@ -119,6 +120,7 @@ export default function App() {
         const saved = current.selectedCalendars.filter(id => list.some(c => c.id === id));
         return { ...current, selectedCalendars: saved.length ? saved : list.filter(c => c.primary).map(c => c.id) };
       });
+      setConnectionVersion(v => v + 1);
       setNotice('Google Calendarに接続しました。');
     } catch (e) { setError(errorMessage(e)); }
     finally { setConnecting(false); }

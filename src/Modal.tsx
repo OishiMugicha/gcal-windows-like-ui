@@ -10,6 +10,7 @@ export default function Modal({ title, children, onClose, busy = false, wide = f
     const element = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
     element.showModal();
+    element.querySelector<HTMLElement>('input:not([type="checkbox"]), select, textarea')?.focus();
     return () => { element.close(); previous?.focus(); };
   }, []);
   return <dialog ref={ref} aria-labelledby={id.current} className={'retro-dialog' + (wide ? ' wide' : '')}
