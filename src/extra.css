@@ -1,0 +1,55 @@
+.nav-buttons, .view-buttons { display: flex; gap: 4px; }
+.day-heading { box-shadow: none; min-height: 0; border-radius: 0; background: #e9e9e9; }
+.day-heading:active { box-shadow: none; }
+.day-heading.sunday:not(.today) { color: #a63a39; }
+.day-heading:focus-visible { outline-offset: -3px; }
+.all-day-event { min-height: 21px; width: 100%; display: block; padding: 2px 5px; text-align: left; font-size: 12px; box-shadow: none; background: color-mix(in srgb, var(--event-color) 12%, white); border-left: 3px solid var(--event-color); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.more-button { min-height: 19px; padding: 1px 4px; background: transparent; box-shadow: none; color: #4d4d4d; font-size: 12px; }
+.more-button:hover { text-decoration: underline; }
+.event-block { touch-action: none; cursor: grab; }
+.event-block.compact { justify-content: center; padding-top: 0; padding-bottom: 0; }
+.event-block.compact strong { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; width: 100%; }
+.event-block:active { box-shadow: none; cursor: grabbing; }
+.event-block.clipped-start { border-top: 2px dashed var(--event-color); }
+.event-block.clipped-end { border-bottom: 2px dashed var(--event-color); }
+.resize-handle { position: absolute; height: 5px; left: 0; right: 0; cursor: ns-resize; z-index: 4; }
+.resize-start { top: 0; }
+.resize-end { bottom: 0; }
+.event-block:hover .resize-handle { background: color-mix(in srgb, var(--event-color) 30%, transparent); }
+.selection { position: absolute; left: 0; right: 0; border: 1px dashed #000080; background: #00008020; z-index: 5; pointer-events: none; }
+.now-line { position: absolute; left: 0; right: 0; border-top: 1px solid #cc3333; z-index: 4; pointer-events: none; }
+.now-line span { position: absolute; height: 5px; width: 5px; background: #cc3333; left: -3px; top: -3px; }
+.day-column { touch-action: none; overflow: clip; }
+.calendar-surface { position: relative; }
+.error-banner { display: flex; align-items: center; gap: 10px; padding: 6px 10px; margin: 0 5px 5px; background: #ffffe1; border: 1px solid #8b6e42; flex-shrink: 0; font-size: 14px; }
+.error-banner span { flex: 1; }
+.error-banner button { min-height: 22px; padding: 0 7px; }
+.empty-selection { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px; background: #efefef; border: 1px solid #888; display: flex; gap: 12px; flex-direction: column; text-align: center; max-width: 90%; z-index: 6; }
+.month-weekdays { display: grid; background: #e9e9e9; flex-shrink: 0; border-bottom: 1px solid #888; }
+.month-weekdays span { text-align: center; border-right: 1px solid #bbb; padding: 9px; }
+.month-grid { display: grid; grid-template-rows: repeat(6, minmax(0, 1fr)); flex: 1; min-height: 0; }
+.month-cell { border-right: 1px solid #c5c5c5; border-bottom: 1px solid #c5c5c5; padding: 3px; min-width: 0; min-height: 0; overflow: auto; }
+.month-cell.other-month { background: #f0f0f0; color: #777; }
+.month-cell.month-today { background: #f3f5fc; }
+.month-date { box-shadow: none; background: transparent; padding: 2px 7px; min-height: 24px; }
+.month-today .month-date { background: navy; color: white; }
+.month-event { display: block; text-align: left; padding: 2px 4px; min-height: 22px; font-size: 12px; box-shadow: none; border-left: 3px solid var(--event-color); background: color-mix(in srgb, var(--event-color) 12%, white); width: 100%; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; margin-top: 2px; }
+.statusbar > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 680px) {
+  .toolbar { gap: 5px; }
+  .toolbar h1 { flex: 1; margin-left: 5px; text-align: right; font-size: 14px; }
+  .view-buttons { margin-left: 0; }
+  .titlebar { height: 27px; }
+  .calendar-surface { margin: 0 2px; }
+  .statusbar { padding: 4px 2px 2px; flex-wrap: wrap; gap: 2px; }
+  .statusbar span:first-child { flex-basis: 100%; }
+  .statusbar span:last-child { display: block; flex: 1; }
+  .day-heading strong { font-size: 18px; }
+  .month-event span { display: none; }
+  .dialog-body { padding: 12px; }
+}
+@media (max-height: 520px) {
+  .toolbar { padding-top: 5px; padding-bottom: 5px; }
+  .day-heading { padding: 3px; }
+  .time-axis > span:nth-child(2n) { visibility: hidden; }
+}

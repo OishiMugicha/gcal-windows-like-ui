@@ -1,0 +1,29 @@
+input, select, textarea { min-width: 0; border: 0; border-radius: 0; padding: 7px 8px; background: white; box-shadow: inset -1px -1px #fff, inset 1px 1px #777, inset -2px -2px #ddd, inset 2px 2px #111; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #000080; outline-offset: 1px; }
+input[type=checkbox] { accent-color: #000080; width: 16px; height: 16px; box-shadow: none; padding: 0; }
+textarea { resize: vertical; min-height: 60px; }
+fieldset { border: 1px solid #888; padding: 12px; margin: 0 0 8px; box-shadow: 1px 1px white; }
+legend { padding: 0 5px; }
+.retro-dialog { background: #c0c0c0; padding: 3px; border: none; box-shadow: inset 1px 1px white, inset -1px -1px black, inset 2px 2px #ddd, inset -2px -2px #777, 6px 6px 0 #0004; width: min(460px, calc(100vw - 24px)); max-height: calc(100dvh - 30px); overflow-y: auto; color: #171717; }
+.retro-dialog::backdrop { background: #0004; }
+.retro-dialog .titlebar { position: sticky; top: 0; z-index: 5; }
+.retro-dialog .titlebar button { margin-left: auto; min-height: 20px; width: 21px; padding: 0; line-height: 20px; font-weight: bold; }
+.dialog-body { display: flex; flex-direction: column; gap: 10px; padding: 15px; }
+.dialog-body p { margin: 0; line-height: 1.7; }
+.field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.check { display: flex; align-items: center; gap: 7px; margin: 5px 0; line-height: 1.5; }
+.date-input-row { display: flex; gap: 10px; }
+.field-note { font-size: 12px; color: #4e4e4e; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+.dialog-actions button { min-width: 82px; }
+.default-button { outline: 1px solid black; outline-offset: 1px; }
+.delete-button { margin-right: auto; }
+.notice { border: 1px solid #8a8a8a; background: #ffffe1; padding: 8px; font-size: 14px; }
+.error-text { color: #920d13; font-size: 14px; }
+.delete-confirm { border: 1px solid #9c4444; padding: 10px; background: #e8dada; }
+.delete-confirm button { margin: 8px 8px 0 0; }
+.calendar-color { width: 12px; height: 12px; border: 1px solid #0004; flex-shrink: 0; }
+.connection-settings summary { cursor: pointer; padding: 5px 0; }
+.connection-settings .field { margin-top: 8px; }
+.agenda-item { text-align: left; border-left: 4px solid var(--event-color); background: white; padding: 10px; line-height: 1.6; }
+.agenda-item span { display: inline-block; min-width: 60px; color: #555; margin-right: 12px; }
