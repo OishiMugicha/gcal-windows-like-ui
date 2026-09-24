@@ -12,6 +12,7 @@ export default function SettingsDialog({ initial, calendars, onSave, onClose }: 
   const actualEnd = endTime + (nextDay ? 1440 : 0);
   const valid = actualEnd > value.startMinute && actualEnd - value.startMinute <= 1440;
   const times = Array.from({ length: 48 }, (_, i) => i * 30);
+  const unavailableDefault = !!value.defaultCalendarId && !calendars.some(c => c.id === value.defaultCalendarId && c.writable);
   return <Modal title="表示設定" onClose={onClose}>
     <form className="dialog-body" onSubmit={e => { e.preventDefault(); if (valid) onSave({ ...value, endMinute: actualEnd }); }}>
       <fieldset><legend>表示する時間帯</legend>
@@ -29,6 +30,14 @@ export default function SettingsDialog({ initial, calendars, onSave, onClose }: 
         <label className="field">週の始まり<select value={value.weekStartsOn} onChange={e => patch({ weekStartsOn: Number(e.target.value) as 0 | 1 })}>
           <option value={1}>月曜日</option><option value={0}>日曜日</option></select></label>
         <label className="check"><input type="checkbox" checked={value.showWeekends} onChange={e => patch({ showWeekends: e.target.checked })} />土曜日・日曜日を表示</label>
+      </fieldset>
+      <fieldset><legend>予定の追加</legend>
+        <label className="field">予定追加時のデフォルトカレンダー<select value={value.defaultCalendarId} onChange={e => patch({ defaultCalendarId: e.target.value })}>
+          <option value="">自動（従来の動作）</option>
+          {unavailableDefault && <option value={value.defaultCalendarId} disabled>設定済みのカレンダー（利用不可）</option>}
+          {calendars.filter(c => c.writable).map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+        </select></label>
+        <p className="field-note">{unavailableDefault ? '設定済みのカレンダーは利用できません。現在は自動選択します。' : '指定したカレンダーは非表示でも作成先になります。'}</p>
       </fieldset>
       <fieldset><legend>表示するカレンダー</legend>
         {calendars.map(c => <label key={c.id} className="check"><input type="checkbox" checked={value.selectedCalendars.includes(c.id)}

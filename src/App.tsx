@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { addDays, atMinute, dateKey, isOnDay, rangeFor, readSettings, timeLabel, timeOf, visibleDays, weekday } from './calendar';
+import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, rangeFor, readSettings, timeLabel, timeOf, visibleDays, weekday } from './calendar';
 import { demoCalendars, demoEvents } from './demo';
 import type { Calendar, CalendarEvent, EventDraft, Settings, View } from './types';
 import TimeGrid from './TimeGrid';
@@ -24,6 +24,7 @@ export default function App() {
   const [calendars, setCalendars] = useState<Calendar[]>(demoCalendars);
   const [events, setEvents] = useState<CalendarEvent[]>(demoEvents);
   const [demoSelected, setDemoSelected] = useState(demoCalendars.map(c => c.id));
+  const [demoDefault, setDemoDefault] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [draft, setDraft] = useState<EventDraft | null>(null);
   const [editorError, setEditorError] = useState('');
@@ -41,6 +42,7 @@ export default function App() {
   const revision = useRef(0), pendingNewId = useRef(''), busyRef = useRef(false);
   const days = useMemo(() => visibleDays(anchor, settings), [anchor, settings]);
   const selected = mode === 'demo' ? demoSelected : settings.selectedCalendars;
+  const preferredCalendar = mode === 'demo' ? demoDefault : settings.defaultCalendarId;
   const selectedKey = selected.join('\n');
   const range = rangeFor(days, settings);
   const filtered = events.filter(e => selected.includes(e.calendarId));
@@ -86,7 +88,7 @@ export default function App() {
   function selectView(view: View) { setSettings(s => ({ ...s, view })); }
   function openEditor(event: CalendarEvent) { pendingNewId.current = ''; setEditorError(''); setDraft(draftFrom(event)); }
   function newDraft(start = atMinute(anchor, settings.startMinute), end = start + 60 * 60_000) {
-    const calendar = calendars.find(c => c.writable && selected.includes(c.id)) || calendars.find(c => c.writable);
+    const calendar = defaultCalendar(calendars, selected, preferredCalendar);
     if (!calendar) { setError('書き込み可能なカレンダーがありません。'); return; }
     pendingNewId.current = newEventId(); setEditorError('');
     setDraft(draftFrom({ id: '', calendarId: calendar.id, title: '', allDay: false, start: new Date(start).toISOString(), end: new Date(end).toISOString() }));
@@ -154,7 +156,8 @@ export default function App() {
   }
   function applySettings(next: Settings) {
     if (mode === 'demo') {
-      setDemoSelected(next.selectedCalendars); setSettings({ ...next, selectedCalendars: settings.selectedCalendars });
+      setDemoSelected(next.selectedCalendars); setDemoDefault(next.defaultCalendarId);
+      setSettings({ ...next, selectedCalendars: settings.selectedCalendars, defaultCalendarId: settings.defaultCalendarId });
     } else setSettings(next);
     setShowSettings(false);
   }
@@ -204,7 +207,7 @@ export default function App() {
     </section>
     <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading ? '予定を取得中…' : busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
-    {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
+    {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, defaultCalendarId: preferredCalendar }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
     {draft && <EventEditor initial={draft} calendars={calendars} busy={busy || connecting} error={editorError} onReconnect={expired ? () => void connect() : undefined} onSave={e => void save(e)} onDelete={e => void remove(e)} onClose={() => { if (!busy) setDraft(null); }} />}
     {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} onClose={() => setListDay(null)}>
       <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}</div>

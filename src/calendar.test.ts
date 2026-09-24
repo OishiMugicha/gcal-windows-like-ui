@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, atMinute, defaults, isOnDay, layoutEvents, rangeFor, timeLabel, validateSettings, visibleDays } from './calendar';
+import { addDays, atMinute, defaultCalendar, defaults, isOnDay, layoutEvents, rangeFor, timeLabel, validateSettings, visibleDays } from './calendar';
 import type { CalendarEvent } from './types';
 const event = (id: string, start: number, end: number): CalendarEvent => ({ id, title: id, calendarId: 'test', allDay: false,
   start: new Date(atMinute('2026-09-21', start)).toISOString(), end: new Date(atMinute('2026-09-21', end)).toISOString() });
@@ -45,5 +45,26 @@ describe('civil dates and settings', () => {
     expect(validateSettings({ startMinute: 480, endMinute: 1950 }).endMinute).toBe(1560);
     expect(validateSettings({ startMinute: 480, endMinute: 1920 }).endMinute).toBe(1920);
     expect(validateSettings({ startMinute: 0, endMinute: 1440 }).startMinute).toBe(0);
+  });
+});
+
+describe('default calendar', () => {
+  const calendars = [
+    { id: 'read', title: 'Read', color: '', writable: false },
+    { id: 'a', title: 'A', color: '', writable: true },
+    { id: 'b', title: 'B', color: '', writable: true },
+  ];
+  it('validates old and malformed settings without discarding a saved ID', () => {
+    expect(validateSettings({}).defaultCalendarId).toBe('');
+    expect(validateSettings({ defaultCalendarId: 42 as unknown as string }).defaultCalendarId).toBe('');
+    expect(validateSettings({ defaultCalendarId: 'missing' }).defaultCalendarId).toBe('missing');
+  });
+  it('prefers the configured writable calendar even when hidden', () => {
+    expect(defaultCalendar(calendars, ['a'], 'b')?.id).toBe('b');
+  });
+  it('falls back for missing or read-only preferences and empty selections', () => {
+    for (const id of ['', 'missing', 'read']) expect(defaultCalendar(calendars, ['b'], id)?.id).toBe('b');
+    expect(defaultCalendar(calendars, [], '')?.id).toBe('a');
+    expect(defaultCalendar(calendars.slice(0, 1), ['read'], 'read')).toBeUndefined();
   });
 });

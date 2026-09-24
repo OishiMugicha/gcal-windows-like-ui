@@ -6,6 +6,7 @@ export interface Settings {
   showWeekends: boolean;
   view: View;
   selectedCalendars: string[];
+  defaultCalendarId: string;
 }
 export interface Calendar {
   id: string;

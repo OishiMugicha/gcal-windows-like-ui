@@ -1,9 +1,9 @@
-import type { CalendarEvent, Settings } from './types';
+import type { Calendar, CalendarEvent, Settings } from './types';
 export const ZONE = 'Asia/Tokyo';
 export const MINUTE = 60_000;
 export const defaults: Settings = {
   startMinute: 480, endMinute: 1560, weekStartsOn: 1,
-  showWeekends: true, view: 'week', selectedCalendars: [],
+  showWeekends: true, view: 'week', selectedCalendars: [], defaultCalendarId: '',
 };
 export const pad = (n: number) => String(n).padStart(2, '0');
 export function dateKey(date: Date = new Date()): string {
@@ -90,6 +90,7 @@ export function validateSettings(value: Partial<Settings>): Settings {
     start >= 0 && start < 1440 && start % 30 === 0 && end % 30 === 0 && end > start && end - start <= 1440;
   return {
     ...defaults,
+    defaultCalendarId: typeof value.defaultCalendarId === 'string' ? value.defaultCalendarId : '',
     startMinute: validRange ? start : defaults.startMinute,
     endMinute: validRange ? end : defaults.endMinute,
     weekStartsOn: value.weekStartsOn === 0 ? 0 : 1,
@@ -101,4 +102,10 @@ export function validateSettings(value: Partial<Settings>): Settings {
 export function readSettings(): Settings {
   try { return validateSettings(JSON.parse(localStorage.getItem('calendar95.settings') || '{}')); }
   catch { return { ...defaults }; }
+}
+
+export function defaultCalendar(calendars: Calendar[], selected: string[], preferred: string): Calendar | undefined {
+  return calendars.find(c => c.writable && c.id === preferred)
+    || calendars.find(c => c.writable && selected.includes(c.id))
+    || calendars.find(c => c.writable);
 }
