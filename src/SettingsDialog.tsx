@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { timeLabel } from './calendar';
 import Modal from './Modal';
 import type { Calendar, Settings } from './types';
-export default function SettingsDialog({ initial, calendars, onSave, onClose }: {
-  initial: Settings; calendars: Calendar[]; onSave: (settings: Settings) => void; onClose: () => void;
+export default function SettingsDialog({ initial, calendars, onSave, onClose, tasksSettings }: {
+  tasksSettings?: ReactNode; initial: Settings; calendars: Calendar[]; onSave: (settings: Settings) => void; onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
   const [nextDay, setNextDay] = useState(initial.endMinute >= 1440);
@@ -45,6 +46,7 @@ export default function SettingsDialog({ initial, calendars, onSave, onClose }: 
           <span className="calendar-color" style={{ background: c.color }} />{c.title}{!c.writable && <small>（閲覧のみ）</small>}</label>)}
         {!value.selectedCalendars.length && <p className="field-note">カレンダーが未選択のため、予定は表示されません。</p>}
       </fieldset>
+      {tasksSettings}
       <div className="dialog-actions"><button type="button" onClick={onClose}>キャンセル</button><button className="default-button" disabled={!valid}>適用</button></div>
     </form>
   </Modal>;

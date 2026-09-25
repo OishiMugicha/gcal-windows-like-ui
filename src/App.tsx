@@ -1,3 +1,4 @@
+import { useTasks } from './useTasks';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, moveUnavailableReason, rangeFor, readSettings, sameEventContent, timeLabel, timeOf, visibleDays, weekday } from './calendar';
@@ -50,6 +51,8 @@ export default function App() {
   const filtered = events.filter(e => selected.includes(e.calendarId));
   const gridStyle = { gridTemplateColumns: '58px repeat(' + days.length + ', minmax(0, 1fr))' };
   const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+  const todo = useTasks({ connected: mode === 'google', connecting, version: connectionVersion, days,
+    onExpired: () => setExpired(true), onReconnect: () => void connect(false, true) });
   useEffect(() => { if (clientId) prepareGoogle().catch(() => {}); }, [clientId]);
   useEffect(() => {
     const state = restoreGoogle(clientId);
@@ -181,14 +184,14 @@ export default function App() {
     } catch (e) { setEditorError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  async function connect(restore = false) {
+  async function connect(restore = false, includeTasks = todo.enabled) {
     if (!clientId) { setNotice('Google接続はまだ設定されていません。サイトの管理者にお問い合わせください。'); return; }
     const attempt = ++connectionAttempt.current;
     setConnecting(true); setRestoreFailed(false); setError(''); revision.current++;
     if (restore) { setCalendars([]); setEvents([]); }
     let authenticated = restore;
     try {
-      const persisted = restore || await connectGoogle(clientId);
+      const persisted = restore || await connectGoogle(clientId, includeTasks);
       authenticated = true;
       if (attempt !== connectionAttempt.current) return;
       const list = await loadCalendars();
@@ -236,25 +239,28 @@ export default function App() {
       <div className="nav-buttons"><button onClick={() => navigate(-1)} aria-label="前の期間">◀</button><button onClick={() => setAnchor(dateKey())}>今日</button><button onClick={() => navigate(1)} aria-label="次の期間">▶</button></div>
       <h1>{periodLabel}</h1>
       <div className="view-buttons" aria-label="表示切替">{(['day', 'week', 'month'] as View[]).map((view, i) => <button key={view} className={settings.view === view ? 'pressed' : ''} aria-pressed={settings.view === view} onClick={() => selectView(view)}>{['日', '週', '月'][i]}</button>)}</div>
-      <span className="toolbar-divider" /><button onClick={() => newDraft()} disabled={busy || connecting}>＋ 予定</button>
-      <button onClick={() => setShowSettings(true)} disabled={busy}>設定</button>
-      {mode === 'google' && <button onClick={() => void refresh()} disabled={loading || busy || expired || connecting || restoreFailed} aria-label="予定を更新">更新</button>}
-      {mode === 'demo' || expired ? <button onClick={() => void connect()} disabled={connecting || busy}>{connecting ? '接続中…' : expired ? '再接続' : 'Googleに接続'}</button>
-        : <button onClick={() => setDisconnectPrompt(true)} disabled={busy}>接続解除</button>}
+      <span className="toolbar-divider" /><button onClick={() => newDraft()} disabled={busy || todo.busy || connecting}>＋ 予定</button>
+      <button onClick={() => setShowSettings(true)} disabled={busy || todo.busy}>設定</button>
+      {mode === 'google' && <button onClick={() => { void refresh(); void todo.refresh(); }} disabled={loading || todo.loading || busy || todo.busy || expired || connecting || restoreFailed} aria-label="予定を更新">更新</button>}
+      {mode === 'demo' || expired ? <button onClick={() => void connect()} disabled={connecting || busy || todo.busy}>{connecting ? '接続中…' : expired ? '再接続' : 'Googleに接続'}</button>
+        : <button onClick={() => setDisconnectPrompt(true)} disabled={busy || todo.busy}>接続解除</button>}
     </nav>
     {restoreFailed && <div className="error-banner"><button onClick={() => void connect(true)} disabled={connecting}>接続の復元を再試行</button><button onClick={disconnect}>接続解除</button></div>}
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="エラーを閉じる">×</button></div>}
-    <section className="calendar-surface" aria-label="カレンダー" aria-busy={loading || busy || connecting}>
+    {todo.banner}
+    <section className="calendar-surface" aria-label="カレンダー" aria-busy={loading || todo.loading || busy || todo.busy || connecting}>
       {settings.view === 'month' ? <>
         <div className="month-weekdays" style={{ gridTemplateColumns: 'repeat(' + (settings.showWeekends ? 7 : 5) + ', 1fr)' }}>
           {days.slice(0, settings.showWeekends ? 7 : 5).map(day => <span key={day}>{weekdays[weekday(day)]}</span>)}</div>
         <div className="month-grid" style={{ gridTemplateColumns: 'repeat(' + (settings.showWeekends ? 7 : 5) + ', minmax(0, 1fr))' }}>
           {days.map(day => {
             const onDay = filtered.filter(e => isOnDay(e, day)).sort((a, b) => Number(b.allDay) - Number(a.allDay) || (!a.allDay && !b.allDay ? a.start.localeCompare(b.start) : 0));
+            const renderEvent = (e: CalendarEvent) => <button key={e.calendarId + e.id} className="month-event" style={calendarColor(e)} onClick={() => openEditor(e)}>{!e.allDay && <span>{timeOf(e.start)} </span>}{e.title}</button>;
+            const items = [...onDay.filter(e => e.allDay).map(renderEvent), ...todo.rows(day), ...onDay.filter(e => !e.allDay).map(renderEvent)];
             return <div key={day} className={'month-cell' + (day.slice(0, 7) !== anchor.slice(0, 7) ? ' other-month' : '') + (day === dateKey() ? ' month-today' : '')}>
               <button className="month-date" aria-label={day + 'の日表示'} onClick={() => { setAnchor(day); selectView('day'); }}>{Number(day.slice(8))}</button>
-              <div className="month-events">{onDay.slice(0, 3).map(e => <button key={e.calendarId + e.id} className="month-event" style={calendarColor(e)} onClick={() => openEditor(e)}>{!e.allDay && <span>{timeOf(e.start)} </span>}{e.title}</button>)}</div>
-              {onDay.length > 3 && <button className="more-button" onClick={() => setListDay(day)}>ほか{onDay.length - 3}件</button>}
+              <div className="month-events">{items.slice(0, 3)}</div>
+              {items.length > 3 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 3}件</button>}
             </div>;
           })}
         </div>
@@ -263,24 +269,26 @@ export default function App() {
           className={'day-heading' + (day === dateKey() ? ' today' : '') + (weekday(day) === 0 ? ' sunday' : '')} aria-label={day + 'の日表示'}><span>{weekdays[weekday(day)]}</span><strong>{Number(day.slice(8))}</strong></button>)}</div>
         <div className="all-day-row" style={gridStyle}><span className="zone-label">終日</span>{days.map(day => {
           const allDay = filtered.filter(e => e.allDay && isOnDay(e, day));
-          return <div key={day} className="all-day-cell">{allDay.slice(0, 1).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="all-day-event" onClick={() => openEditor(e)}>{e.title}</button>)}
-            {allDay.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{allDay.length - 1}件</button>}</div>;
+          const items = [...allDay.map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="all-day-event" onClick={() => openEditor(e)}>{e.title}</button>), ...todo.rows(day)];
+          return <div key={day} className="all-day-cell">{items.slice(0, 1)}
+            {items.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 1}件</button>}</div>;
         })}</div>
-        <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || loading || connecting} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
+        <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || todo.busy || loading || connecting} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
       </>}
-      {!selected.length && <div className="empty-selection"><span>表示するカレンダーが選択されていません。</span><button onClick={() => setShowSettings(true)}>設定を開く</button></div>}
+      {!selected.length && !todo.enabled && <div className="empty-selection"><span>表示するカレンダーが選択されていません。</span><button onClick={() => setShowSettings(true)}>設定を開く</button></div>}
     </section>
-    <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading ? '予定を取得中…' : busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
+    <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading || todo.loading ? '予定・ToDoを取得中…' : busy || todo.busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>
       <span>{settings.view === 'month' ? '月表示' : timeLabel(settings.startMinute) + ' – ' + timeLabel(settings.endMinute) + ' · 表示時間を固定'}</span><span>日本標準時</span></footer>
-    {showSettings && <SettingsDialog initial={{ ...settings, selectedCalendars: selected, defaultCalendarId: preferredCalendar }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
+    {showSettings && <SettingsDialog tasksSettings={todo.settings} initial={{ ...settings, selectedCalendars: selected, defaultCalendarId: preferredCalendar }} calendars={calendars} onSave={applySettings} onClose={() => setShowSettings(false)} />}
     {draft && <EventEditor draft={draft} source={editingSource} onChange={setDraft} calendars={calendars}
       busy={busy || connecting} blocked={!!uncertainMove} error={editorError}
       onReconnect={expired ? () => void connect() : undefined}
       onCheckMove={uncertainMove ? () => void checkMove() : undefined}
       onSave={e => void save(e)} onDelete={() => void remove()} onClose={closeEditor} />}
-    {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} onClose={() => setListDay(null)}>
-      <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}</div>
+    {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} busy={todo.busy} onClose={() => { if (!todo.busy) setListDay(null); }}>
+      <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}{todo.rows(listDay)}</div>
     </Modal>}
+    {todo.editor}
     {disconnectPrompt && <Modal title="Googleとの接続を解除" onClose={() => setDisconnectPrompt(false)}><div className="dialog-body"><p>この画面から予定を消し、サンプル表示に戻ります。Google Calendarの予定は削除されません。</p>
       <div className="dialog-actions"><button onClick={() => setDisconnectPrompt(false)}>キャンセル</button><button onClick={disconnect}>接続解除</button></div></div></Modal>}
   </main>;

@@ -6,11 +6,14 @@ interface GoogleIdentity { accounts: { oauth2: {
 } }; }
 declare global { interface Window { google?: GoogleIdentity; } }
 const scopes = ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events'];
+export const tasksScope = 'https://www.googleapis.com/auth/tasks';
+let grantedScopes = new Set<string>();
+export function hasTasksAccess() { return grantedScopes.has(tasksScope); }
 let token = '', expiresAt = 0;
 const connectionKey = 'calendar95.connection';
 let authVersion = 0;
 export function restoreGoogle(clientId: string): 'connected' | 'expired' | 'none' {
-  token = ''; expiresAt = 0;
+  token = ''; expiresAt = 0; grantedScopes.clear();
   try {
     const raw = localStorage.getItem(connectionKey);
     if (!raw) return 'none';
@@ -22,6 +25,7 @@ export function restoreGoogle(clientId: string): 'connected' | 'expired' | 'none
     }
     if (saved.expiresAt <= Date.now()) { disconnectGoogle(); return 'expired'; }
     token = saved.token; expiresAt = saved.expiresAt;
+    grantedScopes = new Set(Array.isArray(saved.scopes) ? saved.scopes.filter((s: unknown) => typeof s === 'string') : []);
     return 'connected';
   } catch { disconnectGoogle(); return 'none'; }
 }
@@ -42,21 +46,22 @@ export function prepareGoogle(): Promise<void> {
   });
   return identityPromise;
 }
-export function connectGoogle(clientId: string): Promise<boolean> {
+export function connectGoogle(clientId: string, includeTasks = false): Promise<boolean> {
   if (!window.google?.accounts.oauth2) return Promise.reject(new Error('Google認証を準備しています。少し待ってからもう一度押してください。'));
   const version = ++authVersion;
   return new Promise((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
-      client_id: clientId, scope: scopes.join(' '),
+      client_id: clientId, scope: [...scopes, ...(includeTasks ? [tasksScope] : [])].join(' '),
       callback: response => {
         if (version !== authVersion) { reject(new Error('Google接続設定が変更されました。')); return; }
         if (response.error || !response.access_token) { reject(new Error('Googleへの接続が許可されませんでした。')); return; }
         const granted = new Set((response.scope || '').split(' '));
         if (!scopes.every(s => granted.has(s))) { reject(new Error('予定とカレンダー一覧へのアクセスを許可してください。')); return; }
+        grantedScopes = granted;
         token = response.access_token;
         expiresAt = Date.now() + Math.max(0, (Number(response.expires_in) || 3600) - 30) * 1000;
         try {
-          localStorage.setItem(connectionKey, JSON.stringify({ version: 1, clientId, token, expiresAt }));
+          localStorage.setItem(connectionKey, JSON.stringify({ version: 1, clientId, token, expiresAt, scopes: [...grantedScopes] }));
           resolve(true);
         } catch { resolve(false); }
       },
@@ -66,7 +71,7 @@ export function connectGoogle(clientId: string): Promise<boolean> {
   });
 }
 export function disconnectGoogle() {
-  authVersion++; token = ''; expiresAt = 0;
+  authVersion++; token = ''; expiresAt = 0; grantedScopes.clear();
   try { localStorage.removeItem(connectionKey); } catch { /* Storage may be unavailable. */ }
 }
 export class OperationUncertain extends Error {}
@@ -165,4 +170,33 @@ export async function moveGoogleEvent(source: CalendarEvent, destinationCalendar
   const result = fromGoogle(raw, destinationCalendarId);
   if (!result) throw new OperationUncertain('移動結果を確認できません。');
   return result;
+}
+
+// Tasks uses the same OAuth token, but failures remain separate from Calendar.
+export async function tasksRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!token || Date.now() >= expiresAt) { disconnectGoogle(); throw new ConnectionExpired(); }
+  if (!hasTasksAccess()) throw new Error('設定からGoogle ToDoへのアクセスを許可してください。');
+  const requestToken = token;
+  let response: Response;
+  try {
+    response = await fetch('https://tasks.googleapis.com/tasks/v1/' + path, {
+      ...init, signal: AbortSignal.timeout(25_000),
+      headers: { Authorization: 'Bearer ' + requestToken, 'Content-Type': 'application/json', ...init.headers },
+    });
+  } catch {
+    if (init.method) throw new OperationUncertain('ToDoの保存結果を確認できません。');
+    throw new Error('ToDoを取得できません。通信環境を確認して更新してください。');
+  }
+  if (response.status === 401) { if (token === requestToken) disconnectGoogle(); throw new ConnectionExpired(); }
+  if (response.status === 403) throw new Error('Google Tasks APIの有効化とToDoへのアクセス権限を確認してください。');
+  if (response.status === 412) throw new Error('このToDoは別の場所で変更されています。閉じて更新してから編集してください。');
+  if (response.status === 404) throw new Error('ToDoが見つかりません。閉じて更新してください。');
+  if (response.status === 429) throw new Error('アクセスが集中しています。少し待ってから再試行してください。');
+  if (init.method && response.status >= 500) throw new OperationUncertain('ToDoの保存結果を確認できません。');
+  if (!response.ok) throw new Error('Google ToDoへの操作に失敗しました（' + response.status + '）。');
+  try { return await response.json() as T; }
+  catch {
+    if (init.method) throw new OperationUncertain('ToDoの保存結果を確認できません。');
+    throw new Error('ToDoの取得結果を読み取れません。更新してください。');
+  }
 }

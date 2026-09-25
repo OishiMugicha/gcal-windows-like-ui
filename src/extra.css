@@ -53,3 +53,9 @@
   .day-heading { padding: 3px; }
   .time-axis > span:nth-child(2n) { visibility: hidden; }
 }
+
+.task-row { display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; background: #e4eedb; border-left: 3px solid #47732e; padding: 1px 3px; color: #172e12; }
+.task-row input { flex: 0 0 auto; margin: 0; }
+.task-row .task-title { flex: 1; min-width: 0; border: 0; box-shadow: none; background: transparent; color: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px; font: inherit; }
+.task-row.completed .task-title { text-decoration: line-through; color: #52604b; }
+.task-row .task-title:focus-visible { outline: 1px dotted currentColor; outline-offset: -1px; }
