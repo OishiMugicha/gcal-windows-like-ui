@@ -31,8 +31,8 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
   }, []);
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
   const duration = settings.endMinute - settings.startMinute;
-  // Match the title's 1.4 line-height, leaving room for both borders and rounding.
-  const titleSize = Math.max(0, Math.min(14, (gridHeight * 30 / duration - 2.1) / 1.4));
+  // Fill a 30-minute slot, allowing roughly 1px of text beyond each edge.
+  const titleSize = Math.max(0, Math.min(24, gridHeight * 30 / duration + 2));
   function point(e: ReactPointerEvent, fixedColumn?: number) {
     const rect = container.current!.getBoundingClientRect();
     const column = fixedColumn ?? Math.max(0, Math.min(days.length - 1, Math.floor((e.clientX - rect.left - 58) / (rect.width - 58) * days.length)));
@@ -107,10 +107,10 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
           const calendar = calendars.find(c => c.id === s.event.calendarId);
           const height = gridHeight * s.height / 100;
           const borders = 2 + Number(s.clippedStart) + Number(s.clippedEnd);
-          const fontSize = Math.max(0, Math.min(titleSize, (height - borders - 0.1) / 1.4));
+          const fontSize = Math.max(0, Math.min(titleSize, height - borders + 4));
           const timeSize = fontSize * 12 / 14;
           // Two lines need their line-heights, 4px padding, and a 2px gap.
-          const compact = height < borders + 6 + fontSize * 1.4 + timeSize * 1.2 + 0.1;
+          const compact = height < borders + 6 + fontSize + timeSize * 1.2 + 0.1;
           return <button key={s.event.calendarId + s.event.id}
             data-event-id={s.event.id}
             className={'event-block' + (compact ? ' compact' : '') + (s.clippedStart ? ' clipped-start' : '') + (s.clippedEnd ? ' clipped-end' : '')}

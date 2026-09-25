@@ -14,9 +14,8 @@ async function fits(event: Locator) {
   await expect.poll(() => event.evaluate(el => {
     const title = el.querySelector('strong')!;
     const box = el.getBoundingClientRect(), text = title.getBoundingClientRect();
-    const css = getComputedStyle(el);
-    return text.top >= box.top + parseFloat(css.borderTopWidth) - 0.1
-      && text.bottom <= box.bottom - parseFloat(css.borderBottomWidth) + 0.1
+    return text.top >= box.top - 1.1
+      && text.bottom <= box.bottom + 1.1
       && text.height >= parseFloat(getComputedStyle(title).lineHeight) - 0.1;
   })).toBe(true);
 }
@@ -40,8 +39,11 @@ test('30-minute titles follow range, viewport and all-day row height', async ({ 
   await fits(event);
   await expect(event.locator('.event-time')).toHaveCount(0);
   const initial = await font(event);
+  const slotHeight = await event.evaluate(el => el.getBoundingClientRect().height);
+  expect(initial).toBeCloseTo(Math.min(24, slotHeight + 2), 1);
+  await expect(event).toHaveCSS('overflow', 'visible');
   await range(page, '540', '720');
-  await expect.poll(() => font(event)).toBe(14);
+  await expect.poll(() => font(event)).toBe(24);
   await expect(event.locator('.event-time')).toBeVisible();
   await fits(event);
   await range(page, '0', '0', true);
@@ -61,7 +63,7 @@ test('30-minute titles follow range, viewport and all-day row height', async ({ 
   await fits(event);
 });
 
-test('short and clipped events fit a single line and retain full accessible text', async ({ page }) => {
+test('short and clipped events allow slight overflow and retain full accessible text', async ({ page }) => {
   const longTitle = '長いタイトルの予定を省略して表示するための確認'.repeat(5);
   const event = await create(page, longTitle, '10:00', '10:30');
   const short = await create(page, '15分の予定', '11:00', '11:15');

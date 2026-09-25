@@ -7,7 +7,7 @@
 .more-button { min-height: 19px; padding: 1px 4px; background: transparent; box-shadow: none; color: #4d4d4d; font-size: 12px; }
 .more-button:hover { text-decoration: underline; }
 .event-block { touch-action: none; cursor: grab; }
-.event-block.compact { justify-content: center; padding-top: 0; padding-bottom: 0; }
+.event-block.compact { justify-content: center; padding-top: 0; padding-bottom: 0; overflow: visible; }
 .event-block.compact strong { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; width: 100%; }
 .event-block:active { box-shadow: none; cursor: grabbing; }
 .event-block.clipped-start { border-top: 2px dashed var(--event-color); }
