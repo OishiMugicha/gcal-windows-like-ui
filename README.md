@@ -103,23 +103,23 @@ Google Cloudと環境変数の設定はサイトの運営・開発者が行い�
 
 公開環境では、ビルド環境の `VITE_GOOGLE_CLIENT_ID` に設定してください。値はブラウザ向けビルドに含まれるため、変更時には再ビルド・再デプロイが必要です。クライアントIDは公開識別子ですが、アクセストークンやクライアントシークレットは記入しないでください。
 
-## 自分用にデプロイする（Cloudflare Pages）
+## 自分用にデプロイする（Cloudflare Workers）
 
-自分のリポジトリをCloudflare PagesのGit連携で接続し、次の設定でビルドします。手順は [CloudflareのGit連携ドキュメント](https://developers.cloudflare.com/pages/get-started/git-integration/) を参照してください。
+自分のリポジトリをCloudflare WorkersのGit連携で接続し、次の設定でビルド・デプロイします。`wrangler.jsonc` で既存Worker `gcal-windows-like-ui` とビルド後の静的ファイル `dist/` を指定しています。手順は [CloudflareのWorkers Buildsドキュメント](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/) を参照してください。
 
 | 項目 | 設定値 |
 | --- | --- |
 | 本番ブランチ | `main` |
 | ビルドコマンド | `npm test && npm run build` |
-| ビルド出力ディレクトリ | `dist` |
+| デプロイコマンド | `npm run deploy` |
 | ルートディレクトリ | リポジトリのルート |
 | 環境変数 | `NODE_VERSION=24.20.0`（`.nvmrc`に合わせる）、`VITE_GOOGLE_CLIENT_ID`（Google接続用） |
 
-Google接続を利用する場合は、ビルド前に `VITE_GOOGLE_CLIENT_ID` を設定します。`dist/` をコミットする必要はありません。
+Google接続を利用する場合は、ビルド前に `VITE_GOOGLE_CLIENT_ID` を設定します。`dist/` をコミットする必要はありません。デプロイにはプロジェクトに固定したWranglerを使います。
 
 発行されたHTTPSオリジンを、Google Cloudの「承認済みのJavaScript生成元」に追加します。個人利用ではOAuthをExternal / Testingとし、自分だけをテストユーザーに登録します。別の端末やブラウザでは、Google認証が必要です。
 
-`public/_headers` はビルド時にコピーされ、PagesでGoogle認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などを設定します。他のホスティング先では、そのサービスの方法で同等のヘッダーを設定してください。
+`public/_headers` はビルド時にコピーされ、Workersの静的ファイル配信でGoogle認証ポップアップ用の `Cross-Origin-Opener-Policy: same-origin-allow-popups` などを設定します。他のホスティング先では、そのサービスの方法で同等のヘッダーを設定してください。
 
 公開後はPCとスマホで表示を確認し、未接続時にサンプルだけが表示されることを確認します。Google接続は自分の確認用カレンダーで取得・作成・変更・削除を試してください。
 
