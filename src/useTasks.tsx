@@ -14,8 +14,8 @@ function readPreferences(): Preferences {
 }
 const sameTask = (a: Task, b: Task) => a.id === b.id && a.listId === b.listId;
 const message = (e: unknown) => e instanceof Error ? e.message : 'ToDoへの操作に失敗しました。';
-export function useTasks({ connected, connecting, version, days, onExpired, onReconnect }: {
-  connected: boolean; connecting: boolean; version: number; days: string[];
+export function useTasks({ connected, connecting, blocked, version, days, onExpired, onReconnect }: {
+  connected: boolean; connecting: boolean; blocked: boolean; version: number; days: string[];
   onExpired: () => void; onReconnect: () => void;
 }) {
   const [preferences, setPreferences] = useState(readPreferences);
@@ -66,13 +66,19 @@ export function useTasks({ connected, connecting, version, days, onExpired, onRe
   }, [refresh]);
   function replace(task: Task) { setTasks(current => current.map(t => sameTask(t, task) ? task : t)); }
   async function save(task: Task, changes: TaskChanges, fromEditor: boolean) {
-    if (saving.current || connecting || uncertain) return;
+    if (saving.current || blocked || connecting || uncertain) return;
     saving.current = true; setBusy(true); revision.current++; setLoading(false); setEditorError(''); setOperationError('');
+    const original = tasks.find(current => sameTask(current, task)) || task;
+    const optimistic = { ...task, ...changes };
+    replace(optimistic);
+    if (fromEditor) setEditing(null);
     try {
       const saved = await patchTask(task, changes);
       replace(saved);
       if (fromEditor) setEditing(null);
     } catch (e) {
+      replace(original);
+      if (fromEditor) setEditing(optimistic);
       if (e instanceof OperationUncertain) {
         setUncertain({ task, changes });
         if (!fromEditor) setEditing(task);
@@ -105,9 +111,9 @@ export function useTasks({ connected, connecting, version, days, onExpired, onRe
     && (preferences.lists === null || preferences.lists.includes(task.listId))) : [];
   function row(task: Task) {
     return <div key={'task:' + task.listId + ':' + task.id} className={'task-row' + (task.status === 'completed' ? ' completed' : '')}>
-      <input type="checkbox" aria-label={task.title + 'を完了'} checked={task.status === 'completed'} disabled={busy || connecting || !!uncertain}
+      <input type="checkbox" aria-label={task.title + 'を完了'} checked={task.status === 'completed'} disabled={busy || blocked || connecting || !!uncertain}
         onChange={e => void save(task, { status: e.target.checked ? 'completed' : 'needsAction' }, false)} />
-      <button className="task-title" onClick={() => { setEditing(task); setEditorError(''); }} disabled={busy || !!uncertain}>{task.title || '（タイトルなし）'}</button>
+      <button className="task-title" onClick={() => { if (saving.current || blocked || connecting || uncertain) return; setEditing(task); setEditorError(''); }} disabled={busy || blocked || connecting || !!uncertain}>{task.title || '（タイトルなし）'}</button>
     </div>;
   }
   return {

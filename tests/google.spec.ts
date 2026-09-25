@@ -215,3 +215,79 @@ test('token expiration during use clears storage and offers reconnect', async ({
   await expect(page.getByRole('button', { name: '再接続', exact: true })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('calendar95.connection'))).toBeNull();
 });
+
+for (const reject of [false, true]) {
+  test(`new event appears before response and ${reject ? 'rolls back' : 'settles once'}`, async ({ page }) => {
+    await mockGoogle(page);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let submittedId = '';
+    await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+      const req = route.request();
+      if (req.url().includes('/calendarList')) return route.fulfill({ json: { items: [
+        { id: 'main', summary: '個人', accessRole: 'owner', primary: true },
+      ] } });
+      if (req.method() === 'POST') {
+        const body = req.postDataJSON(); submittedId = body.id;
+        await held;
+        return route.fulfill(reject ? { status: 403, json: {} } : { json: { ...body, etag: 'saved' } });
+      }
+      return route.fulfill({ json: { items: [] } });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Googleに接続' }).click();
+    await expect(page.getByRole('button', { name: '予定を更新' })).toBeEnabled();
+    await page.getByRole('button', { name: '＋ 予定' }).click();
+    await page.getByLabel('件名').fill('すぐに作成');
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /すぐに作成/ })).toHaveCount(1);
+    await expect(page.locator('.statusbar')).toContainText('保存中');
+    await expect.poll(() => submittedId).not.toBe('');
+    await expect(page.locator('[data-event-id]')).toHaveAttribute('data-event-id', submittedId);
+    release();
+    await expect(page.locator('.statusbar')).not.toContainText('保存中');
+    if (reject) {
+      await expect(page.getByLabel('件名')).toHaveValue('すぐに作成');
+      await expect(page.getByRole('button', { name: /すぐに作成/ })).toHaveCount(0);
+    } else await expect(page.getByRole('button', { name: /すぐに作成/ })).toHaveCount(1);
+  });
+}
+
+test('a read started before editing cannot overwrite the optimistic event', async ({ page }) => {
+  await mockGoogle(page);
+  let releaseRead!: () => void, releaseWrite!: () => void;
+  const heldRead = new Promise<void>(resolve => { releaseRead = resolve; });
+  const heldWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+  let holdReads = false;
+  await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+    const req = route.request();
+    if (req.url().includes('/calendarList')) return route.fulfill({ json: { items: [
+      { id: 'main', summary: '個人', accessRole: 'owner', primary: true },
+    ] } });
+    if (req.method() === 'PATCH') {
+      await heldWrite;
+      return route.fulfill({ json: { ...instance, ...req.postDataJSON(), etag: 'saved' } });
+    }
+    if (holdReads) await heldRead;
+    return route.fulfill({ json: { items: [instance] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Googleに接続' }).click();
+  await page.getByRole('button', { name: /深夜の繰り返し/ }).click();
+  holdReads = true;
+  const readStarted = page.waitForRequest(req => req.method() === 'GET' && req.url().includes('/events?'));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await readStarted;
+  await page.getByLabel('件名').fill('新しい表示');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('button', { name: /新しい表示/ })).toBeVisible();
+  const readFinished = page.waitForResponse(res => res.request().method() === 'GET' && res.url().includes('/events?'));
+  releaseRead();
+  await readFinished;
+  // A browser round trip lets the completed fetch update React before checking the view.
+  await page.getByRole('button', { name: '月', exact: true }).click();
+  await expect(page.getByRole('button', { name: /新しい表示/ })).toBeVisible();
+  releaseWrite();
+  await expect(page.locator('.statusbar')).not.toContainText('保存中');
+});

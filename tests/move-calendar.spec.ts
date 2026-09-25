@@ -22,7 +22,7 @@ async function setup(page: Page, options: { allDay?: boolean; hidden?: boolean; 
   };
   const state = {
     events: new Map<string, GoogleEvent>([['main', event]]),
-    moveError: '', patchError: 0, readError: false,
+    moveError: '', patchError: 0, readError: false, hold: undefined as Promise<void> | undefined,
     moves: [] as string[], patches: [] as { calendar: string; etag?: string; body: Record<string, unknown> }[],
     deletes: [] as string[],
   };
@@ -31,11 +31,12 @@ async function setup(page: Page, options: { allDay?: boolean; hidden?: boolean; 
     if (url.pathname.endsWith('/calendarList')) {
       await route.fulfill({ json: { items: [
         { id: 'main', summary: '仕事', accessRole: options.readOnly ? 'reader' : 'owner', primary: true },
-        { id: 'other', summary: '個人', accessRole: 'writer' },
+        { id: 'other', summary: '個人', accessRole: 'writer', backgroundColor: '#008800' },
         { id: 'read', summary: '閲覧', accessRole: 'reader' },
       ] } }); return;
     }
     const calendar = url.pathname.split('/')[4];
+    if (req.method() !== 'GET') await state.hold;
     if (url.pathname.endsWith('/move')) {
       state.moves.push(calendar);
       expect(req.method()).toBe('POST');
@@ -223,4 +224,79 @@ test('demo moves stay local and do not change the demo default', async ({ page }
   await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
   await page.getByRole('button', { name: '＋ 予定' }).click();
   await expect(calendarField(page)).toHaveValue('sample-work');
+});
+
+for (const operation of ['edit', 'move', 'delete'] as const) {
+  test(`optimistic ${operation} is visible before response and rolls back on rejection`, async ({ page }) => {
+    const state = await setup(page);
+    let release!: () => void;
+    state.hold = new Promise<void>(resolve => { release = resolve; });
+    if (operation === 'edit') {
+      state.patchError = 403;
+      await page.getByLabel('件名').fill('即時表示');
+    } else if (operation === 'move') {
+      state.moveError = '403';
+      await calendarField(page).selectOption('other');
+    } else {
+      await page.route('**/events/event1', async route => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        await state.hold;
+        await route.fulfill({ status: 403, json: {} });
+      });
+      await page.getByRole('button', { name: '削除…' }).click();
+    }
+    if (operation === 'delete') await page.getByRole('button', { name: '削除する' }).click();
+    else await save(page);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.statusbar')).toContainText('保存中');
+    if (operation === 'delete') await expect(page.locator('[data-event-id="event1"]')).toHaveCount(0);
+    else {
+      const event = page.locator('[data-event-id="event1"]');
+      await expect(event).toContainText(operation === 'edit' ? '即時表示' : '移動する予定');
+      if (operation === 'move') await expect(event).toHaveCSS('--event-color', '#008800');
+      await event.click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    }
+    release();
+    await expect(page.getByRole('alert')).toContainText('権限');
+    await expect(page.getByLabel('件名')).toHaveValue(operation === 'edit' ? '即時表示' : '移動する予定');
+    await expect(page.locator('[data-event-id="event1"]')).toContainText('移動する予定');
+  });
+}
+
+test('optimistic drag and resize restore the original times on failure', async ({ page }) => {
+  const state = await setup(page);
+  await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await expect(page.getByRole('button', { name: '予定を更新' })).toBeEnabled();
+  for (const resize of [false, true]) {
+    let release!: () => void;
+    state.hold = new Promise<void>(resolve => { release = resolve; });
+    state.patchError = 403;
+    const event = page.locator('[data-event-id="event1"]');
+    const originalTime = await event.getAttribute('aria-label');
+    const box = (await (resize ? event.locator('.resize-end') : event).boundingBox())!;
+    const grid = (await page.locator('.time-grid').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + grid.height / 18, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('.statusbar')).toContainText('保存中');
+    await expect(event).not.toHaveAttribute('aria-label', originalTime!);
+    release();
+    await expect(page.locator('.statusbar')).not.toContainText('保存中');
+    await expect(event).toHaveAttribute('aria-label', originalTime!);
+  }
+});
+
+test('period changed during a save is fetched after the response', async ({ page }) => {
+  const state = await setup(page);
+  let release!: () => void;
+  state.hold = new Promise<void>(resolve => { release = resolve; });
+  await page.getByLabel('件名').fill('保存中に期間変更');
+  await save(page);
+  await page.getByRole('button', { name: '次の期間' }).click();
+  const fetched = page.waitForRequest(req => req.method() === 'GET' && req.url().includes('timeMin=2026-09-27'));
+  release();
+  await fetched;
+  await expect(page.locator('.statusbar')).not.toContainText('保存中');
 });

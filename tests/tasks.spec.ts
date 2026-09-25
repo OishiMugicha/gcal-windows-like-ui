@@ -12,7 +12,7 @@ async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; 
       : options.overflow ? [{ id: 'event', summary: '終日予定', start: { date: '2026-09-24' }, end: { date: '2026-09-25' } }] : [],
   } }));
   let stored: Record<string, unknown> = { id: 'task', title: '買い物', notes: '牛乳', due: '2026-09-24T00:00:00Z', status: 'needsAction', etag: 'v1' };
-  const state = { fail: '', patches: [] as Record<string, unknown>[], queries: [] as URL[], gets: 0 };
+  const state = { hold: undefined as Promise<void> | undefined, fail: '', patches: [] as Record<string, unknown>[], queries: [] as URL[], gets: 0 };
   await page.route('https://tasks.googleapis.com/tasks/v1/**', async route => {
     const req = route.request(), url = new URL(req.url()); state.queries.push(url);
     if (state.fail === '401') return route.fulfill({ status: 401, json: {} });
@@ -20,6 +20,7 @@ async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; 
     if (url.pathname.endsWith('/users/@me/lists')) return route.fulfill({ json: url.searchParams.has('pageToken')
       ? { items: [{ id: 'list', title: 'マイタスク' }] } : { items: [], nextPageToken: 'lists2' } });
     if (req.method() === 'PATCH') {
+      await state.hold;
       const changes = req.postDataJSON(); state.patches.push(changes);
       if (state.fail === 'patch403') return route.fulfill({ status: 403, json: {} });
       stored = { ...stored, ...changes, etag: 'v2' };
@@ -137,3 +138,33 @@ test('mobile ToDo restores with saved authorization and remains within the viewp
   await page.getByRole('button', { name: '買い物', exact: true }).click();
   await page.screenshot({ path: '.runtime/tasks-editor.png' });
 });
+
+for (const operation of ['edit', 'complete', 'undate'] as const) {
+  test(`ToDo optimistic ${operation} precedes response and restores on rejection`, async ({ page }) => {
+    const state = await setup(page);
+    let release!: () => void;
+    state.hold = new Promise<void>(resolve => { release = resolve; });
+    state.fail = 'patch403';
+    if (operation === 'complete') await page.getByRole('checkbox', { name: '買い物を完了' }).click();
+    else {
+      await page.getByRole('button', { name: '買い物', exact: true }).click();
+      await page.getByLabel('タイトル', { exact: true }).fill('保持するタイトル');
+      await page.getByLabel('メモ', { exact: true }).fill('保持するメモ');
+      await page.getByLabel('日付', { exact: true }).fill(operation === 'undate' ? '' : '2026-09-25');
+      await page.getByRole('button', { name: '保存', exact: true }).click();
+    }
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.statusbar')).toContainText('保存中');
+    await expect(page.getByRole('button', { name: '買い物', exact: true })).toHaveCount(0);
+    if (operation === 'edit') await expect(page.getByRole('button', { name: '保持するタイトル', exact: true })).toBeVisible();
+    else await expect(page.locator('.task-row')).toHaveCount(0);
+    release();
+    await expect(page.getByRole('alert')).toContainText('Google Tasks API');
+    await expect(page.getByRole('button', { name: '買い物', exact: true })).toBeVisible();
+    if (operation !== 'complete') {
+      await expect(page.getByLabel('タイトル', { exact: true })).toHaveValue('保持するタイトル');
+      await expect(page.getByLabel('メモ', { exact: true })).toHaveValue('保持するメモ');
+      await expect(page.getByLabel('日付', { exact: true })).toHaveValue(operation === 'undate' ? '' : '2026-09-25');
+    }
+  });
+}

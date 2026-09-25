@@ -51,7 +51,7 @@ export default function App() {
   const filtered = events.filter(e => selected.includes(e.calendarId));
   const gridStyle = { gridTemplateColumns: '58px repeat(' + days.length + ', minmax(0, 1fr))' };
   const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
-  const todo = useTasks({ connected: mode === 'google', connecting, version: connectionVersion, days,
+  const todo = useTasks({ connected: mode === 'google', connecting, blocked: busy, version: connectionVersion, days,
     onExpired: () => setExpired(true), onReconnect: () => void connect(false, true) });
   useEffect(() => { if (clientId) prepareGoogle().catch(() => {}); }, [clientId]);
   useEffect(() => {
@@ -65,10 +65,13 @@ export default function App() {
     catch { setNotice('設定を保存できません。このブラウザの保存領域を確認してください。'); }
   }, [settings]);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timer); }, [notice]);
-  const refresh = useCallback(async () => {
-    if (mode !== 'google' || busyRef.current || connecting) return;
+  const deferredRefresh = useRef(false);
+  const refresh = useCallback(async (clearError = true) => {
+    if (mode !== 'google' || connecting) return;
+    if (busyRef.current) { deferredRefresh.current = true; return; }
+    deferredRefresh.current = false;
     const requestId = ++revision.current;
-    setLoading(true); setError('');
+    setLoading(true); if (clearError) setError('');
     try {
       const results = await Promise.all(settings.selectedCalendars.map(id => loadEvents(id, range.start, range.end)));
       if (requestId !== revision.current) return;
@@ -78,6 +81,12 @@ export default function App() {
       setError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true);
     } finally { if (requestId === revision.current) setLoading(false); }
   }, [mode, selectedKey, range.start, range.end, connectionVersion, connecting]);
+  const latestRefresh = useRef(refresh);
+  latestRefresh.current = refresh;
+  function finishOperation() {
+    busyRef.current = false; setBusy(false);
+    if (deferredRefresh.current) void latestRefresh.current(false);
+  }
   useEffect(() => { void refresh(); return () => { revision.current++; }; }, [refresh]);
   useEffect(() => {
     const handler = () => { if (document.visibilityState === 'visible') void refresh(); };
@@ -91,8 +100,9 @@ export default function App() {
     } else setAnchor(addDays(anchor, direction * (settings.view === 'week' ? 7 : 1)));
   }
   function selectView(view: View) { setSettings(s => ({ ...s, view })); }
-  function openEditor(event: CalendarEvent) { pendingNewId.current = ''; setEditingSource(event); setUncertainMove(null); setEditorError(''); setDraft(draftFrom(event)); }
+  function openEditor(event: CalendarEvent) { if (busyRef.current || todo.busy || connecting) return; pendingNewId.current = ''; setEditingSource(event); setUncertainMove(null); setEditorError(''); setDraft(draftFrom(event)); }
   function newDraft(start = atMinute(anchor, settings.startMinute), end = start + 60 * 60_000) {
+    if (busyRef.current || todo.busy || connecting) return;
     const calendar = defaultCalendar(calendars, selected, preferredCalendar);
     if (!calendar) { setError('書き込み可能なカレンダーがありません。'); return; }
     pendingNewId.current = newEventId(); setEditingSource(null); setUncertainMove(null); setEditorError('');
@@ -112,8 +122,9 @@ export default function App() {
       htmlLink: saved.htmlLink, organizerSelf: saved.organizerSelf, eventType: saved.eventType }));
   }
   async function save(event: CalendarEvent, fromEditor = true) {
-    if (busyRef.current || (fromEditor && uncertainMove)) return;
-    const source = fromEditor ? editingSource : event;
+    if (busyRef.current || todo.busy || connecting || (fromEditor && uncertainMove)) return;
+    const source = fromEditor ? editingSource : events.find(current => sameEvent(current, event));
+    const savedDraft = draft;
     const isNew = !event.id;
     let target = isNew ? { ...event, id: pendingNewId.current || newEventId() } : { ...event, etag: source?.etag ?? event.etag };
     const moving = !!source && source.calendarId !== event.calendarId;
@@ -123,6 +134,9 @@ export default function App() {
     }
     if (moving && moveUnavailableReason(source)) { setEditorError(moveUnavailableReason(source)); return; }
     busyRef.current = true; setBusy(true); setEditorError(''); setError(''); revision.current++; setLoading(false);
+    const optimistic = target;
+    replaceEvent(source || target, target);
+    if (fromEditor) { setDraft(null); setEditingSource(null); }
     let moved: CalendarEvent | undefined;
     try {
       if (moving) {
@@ -134,20 +148,26 @@ export default function App() {
           }
           throw error;
         }
-        replaceEvent(source, moved);
-        adoptMovedEvent(moved, target);
+        // Keep the requested content visible until both operations settle.
         target = { ...target, id: moved.id, etag: moved.etag, htmlLink: moved.htmlLink,
           organizerSelf: moved.organizerSelf, eventType: moved.eventType };
       }
       const saved = mode === 'demo' ? target : moved && sameEventContent(source!, target) ? moved : await saveGoogleEvent(target, isNew);
-      replaceEvent(source || saved, saved);
+      replaceEvent(optimistic, saved);
       if (fromEditor) { setDraft(null); setEditingSource(null); }
       markOutside(saved);
     } catch (e) {
+      if (moved) replaceEvent(optimistic, moved);
+      else if (source) replaceEvent(optimistic, source);
+      else setEvents(current => current.filter(item => !sameEvent(item, target)));
+      if (fromEditor) {
+        if (moved) adoptMovedEvent(moved, event);
+        else { setDraft(savedDraft); setEditingSource(source || null); }
+      }
       const message = (moved ? e instanceof OperationUncertain ? '移動済みですが、内容変更の保存結果は不明です。' : '移動済みですが、内容変更は未保存です。' : '') + errorMessage(e);
       if (fromEditor) setEditorError(message); else setError(message);
       if (e instanceof ConnectionExpired) setExpired(true);
-    } finally { busyRef.current = false; setBusy(false); }
+    } finally { finishOperation(); }
   }
   async function checkMove() {
     if (!uncertainMove || !draft || busyRef.current) return;
@@ -171,18 +191,21 @@ export default function App() {
     } catch (e) {
       setEditorError('移動結果を確認できません。' + errorMessage(e));
       if (e instanceof ConnectionExpired) setExpired(true);
-    } finally { busyRef.current = false; setBusy(false); }
+    } finally { finishOperation(); }
   }
   async function remove() {
-    if (busyRef.current || uncertainMove || !editingSource) return;
+    if (busyRef.current || todo.busy || connecting || uncertainMove || !editingSource) return;
     const event = editingSource;
+    const savedDraft = draft;
     if (!calendars.some(c => c.id === event.calendarId && c.writable)) return;
     busyRef.current = true; setBusy(true); setEditorError(''); revision.current++; setLoading(false);
+    setEvents(current => current.filter(e => !sameEvent(e, event)));
+    setDraft(null); setEditingSource(null);
     try {
       if (mode === 'google') await deleteGoogleEvent(event);
       setEvents(current => current.filter(e => !sameEvent(e, event))); setDraft(null); setEditingSource(null); setNotice('予定を削除しました。');
-    } catch (e) { setEditorError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true); }
-    finally { busyRef.current = false; setBusy(false); }
+    } catch (e) { replaceEvent(event, event); setDraft(savedDraft); setEditingSource(event); setEditorError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true); }
+    finally { finishOperation(); }
   }
   async function connect(restore = false, includeTasks = todo.enabled) {
     if (!clientId) { setNotice('Google接続はまだ設定されていません。サイトの管理者にお問い合わせください。'); return; }
