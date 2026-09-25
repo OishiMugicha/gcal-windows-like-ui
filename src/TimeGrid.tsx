@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { atMinute, layoutEvents, MINUTE, timeLabel, timeOf } from './calendar';
 import type { Calendar, CalendarEvent, Settings } from './types';
@@ -21,8 +21,18 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
   const dragRef = useRef<Drag | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [gridHeight, setGridHeight] = useState(0);
+  useLayoutEffect(() => {
+    const grid = container.current!;
+    setGridHeight(grid.getBoundingClientRect().height);
+    const observer = new ResizeObserver(([entry]) => setGridHeight(entry.contentRect.height));
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
   const duration = settings.endMinute - settings.startMinute;
+  // Match the title's 1.4 line-height, leaving room for both borders and rounding.
+  const titleSize = Math.max(0, Math.min(14, (gridHeight * 30 / duration - 2.1) / 1.4));
   function point(e: ReactPointerEvent, fixedColumn?: number) {
     const rect = container.current!.getBoundingClientRect();
     const column = fixedColumn ?? Math.max(0, Math.min(days.length - 1, Math.floor((e.clientX - rect.left - 58) / (rect.width - 58) * days.length)));
@@ -95,7 +105,12 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
         {ticks.map(m => <div className="hour-line" key={m} style={{ top: (m - settings.startMinute) / duration * 100 + '%' }} />)}
         {layoutEvents(displayEvents, day, settings).map(s => {
           const calendar = calendars.find(c => c.id === s.event.calendarId);
-          const compact = s.height < 5;
+          const height = gridHeight * s.height / 100;
+          const borders = 2 + Number(s.clippedStart) + Number(s.clippedEnd);
+          const fontSize = Math.max(0, Math.min(titleSize, (height - borders - 0.1) / 1.4));
+          const timeSize = fontSize * 12 / 14;
+          // Two lines need their line-heights, 4px padding, and a 2px gap.
+          const compact = height < borders + 6 + fontSize * 1.4 + timeSize * 1.2 + 0.1;
           return <button key={s.event.calendarId + s.event.id}
             data-event-id={s.event.id}
             className={'event-block' + (compact ? ' compact' : '') + (s.clippedStart ? ' clipped-start' : '') + (s.clippedEnd ? ' clipped-end' : '')}
@@ -103,6 +118,7 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
             title={s.event.title + '\n' + timeOf(s.event.start) + ' – ' + timeOf(s.event.end)}
             style={{ top: s.top + '%', height: s.height + '%', left: s.column / s.columns * 100 + '%',
               width: 100 / s.columns + '%', '--event-color': s.event.color || calendar?.color || '#3159a6',
+              fontSize: fontSize + 'px', '--event-time-size': timeSize + 'px',
             } as CSSProperties}
             onPointerDown={e => start(e, index, 'move', s.event)}
             onClick={e => { if (e.detail === 0 || !calendar?.writable || (e.nativeEvent as PointerEvent).pointerType === 'touch') onEdit(s.event); }}>
