@@ -173,3 +173,41 @@ test('prefetches three weeks, reuses them and rejects late responses after navig
   await expect(page.getByRole('button', { name: '取得3', exact: true })).toBeVisible();
   await expect(page.locator('[data-day="2026-10-05"] .day-loading')).toHaveText('予定は未取得です');
 });
+
+async function pixelWheel(page: Page, deltaX: number) {
+  await page.locator('.week-viewport').dispatchEvent('wheel', { deltaX });
+  await page.clock.runFor(16);
+}
+
+test('snaps before the momentum tail ends and accepts a renewed or reversed gesture', async ({ page }) => {
+  await wheel(page, 1.6);
+  for (const delta of [24, 12, 6, 3]) await pixelWheel(page, delta);
+  for (const delta of [2.8, 2.5, 2.2, 2, 1.8, 1.6, 1.4, 1.2, 1]) await pixelWheel(page, delta);
+  // Inputs are still arriving every 16ms, but snapping has already finished.
+  await expect(page.locator('.week-viewport')).toHaveAttribute('data-moving', 'false');
+  await expect(columns(page).first()).toHaveAttribute('data-day', '2026-09-23');
+  const before = (await columns(page).first().boundingBox())!.x;
+  await pixelWheel(page, 0.5);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(before, 1);
+  // A fresh push in the same direction immediately takes control again.
+  await pixelWheel(page, 20);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(before - 20, 1);
+  for (const delta of [10, 5, 2]) await pixelWheel(page, delta);
+  await page.clock.runFor(130);
+  const settled = (await columns(page).first().boundingBox())!.x;
+  await pixelWheel(page, -2);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(settled + 2, 1);
+  await settle(page);
+});
+
+test('keeps slow deliberate scrolling responsive and clears tail suppression after a pause', async ({ page }) => {
+  const initial = (await columns(page).first().boundingBox())!.x;
+  for (let i = 0; i < 12; i++) await pixelWheel(page, 2);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(initial - 24, 1);
+  for (const delta of [30, 15, 7, 3]) await pixelWheel(page, delta);
+  await page.clock.runFor(200);
+  const settled = (await columns(page).first().boundingBox())!.x;
+  await pixelWheel(page, 2);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(settled - 2, 1);
+  await settle(page);
+});

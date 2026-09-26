@@ -18,6 +18,8 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
     if (!enabled || !el) return;
     let origin = start, width = 0, offset = 0, target = 0;
     let timer = 0, frame = 0, active = false, dragging = false;
+    let lastWheel = -Infinity, previousDelta = 0, peakDelta = 0, decreases = 0;
+    let settlingTail = false, tailDelta = 0;
     function paint() { el!.style.setProperty('--week-offset', `${offset}px`); }
     function recycle() {
       const shift = offset >= 14 * width ? 7 : offset <= 0 ? -7 : 0;
@@ -35,7 +37,7 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
       const day = addDays(origin, Math.round(offset / width) - 7);
       current.current.onChange(day);
     }
-    function animate(to: number) {
+    function animate(to: number, duration = 160) {
       stopAnimation(); begin(); target = to;
       const from = offset, distance = to - from, began = performance.now();
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -44,7 +46,7 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
         finish(); return;
       }
       function tick(now: number) {
-        const progress = Math.min(1, (now - began) / 160);
+        const progress = Math.min(1, (now - began) / duration);
         // target may be rebased while the strip is recycled.
         offset = target - distance * Math.pow(1 - progress, 3);
         recycle(); paint();
@@ -68,9 +70,24 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
       if (!delta) return;
       e.preventDefault();
       if (dragging || current.current.blocked) return;
-      stopAnimation(); begin();
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 7 * width : 1;
-      offset += delta * unit;
+      const pixels = delta * unit, magnitude = Math.abs(pixels), now = performance.now();
+      // WheelEvent has no portable momentum flag. Recognize only the small,
+      // declining tail of a faster gesture; preserve deliberate slow movement.
+      const newGesture = now - lastWheel > 150 || Math.sign(pixels) !== Math.sign(previousDelta)
+        || (settlingTail && magnitude > Math.max(6, tailDelta * 2));
+      if (newGesture) { peakDelta = 0; decreases = 0; settlingTail = false; }
+      lastWheel = now;
+      if (settlingTail) { previousDelta = pixels; return; }
+      decreases = !newGesture && magnitude < Math.abs(previousDelta) ? decreases + 1 : 0;
+      previousDelta = pixels; peakDelta = Math.max(peakDelta, magnitude);
+      if (peakDelta >= 12 && decreases >= 3 && magnitude <= Math.min(4, peakDelta * 0.15)) {
+        settlingTail = true; tailDelta = magnitude;
+        animate(Math.round(offset / width) * width, 120);
+        return;
+      }
+      stopAnimation(); begin();
+      offset += pixels;
       while (offset >= 14 * width || offset <= 0) recycle();
       target = offset; paint();
       timer = window.setTimeout(() => animate(Math.round(offset / width) * width), 150);
