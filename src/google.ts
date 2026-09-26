@@ -139,9 +139,11 @@ export async function loadEvents(calendarId: string, start: string, end: string)
 }
 export function newEventId() { return crypto.randomUUID().replaceAll('-', ''); }
 export async function saveGoogleEvent(event: CalendarEvent, isNew: boolean): Promise<CalendarEvent> {
+  // PATCH preserves omitted nested fields; clear the opposite date representation.
+  const cleared = isNew ? {} : event.allDay ? { dateTime: null, timeZone: null } : { date: null };
   const body = { ...(isNew ? { id: event.id } : {}), summary: event.title, description: event.description || '', location: event.location || '',
-    start: event.allDay ? { date: event.startDate } : { dateTime: event.start, timeZone: ZONE },
-    end: event.allDay ? { date: event.endDate } : { dateTime: event.end, timeZone: ZONE } };
+    start: { ...cleared, ...(event.allDay ? { date: event.startDate } : { dateTime: event.start, timeZone: ZONE }) },
+    end: { ...cleared, ...(event.allDay ? { date: event.endDate } : { dateTime: event.end, timeZone: ZONE }) } };
   const path = 'calendars/' + encodeURIComponent(event.calendarId) + '/events' + (isNew ? '' : '/' + encodeURIComponent(event.id));
   const raw = await request<GoogleEvent>(path, { method: isNew ? 'POST' : 'PATCH', body: JSON.stringify(body), headers: !isNew && event.etag ? { 'If-Match': event.etag } : {} });
   const result = fromGoogle(raw, event.calendarId);

@@ -9,6 +9,89 @@ async function mockGoogle(page: Page) {
 }
 const instance = { id: 'instance1', recurringEventId: 'master1', summary: '深夜の繰り返し', etag: '"v1"',
   start: { dateTime: '2026-09-22T01:00:00+09:00' }, end: { dateTime: '2026-09-22T01:30:00+09:00' } };
+
+for (const initiallyAllDay of [true, false]) {
+  test(`create, edit and convert ${initiallyAllDay ? 'all-day to timed' : 'timed to all-day'} event`, async ({ page }) => {
+    await mockGoogle(page);
+    type DateFields = { date?: string; dateTime?: string; timeZone?: string };
+    type StoredEvent = { id: string; summary: string; etag: string; start: DateFields; end: DateFields };
+    let stored: StoredEvent | undefined;
+    let writes = 0;
+    const mergeDate = (previous: DateFields, patch: Record<string, string | null>): DateFields => {
+      const result: Record<string, string> = { ...previous };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === null) delete result[key];
+        else result[key] = value;
+      }
+      return result;
+    };
+    await page.route('https://www.googleapis.com/calendar/v3/**', async route => {
+      const req = route.request();
+      if (req.url().includes('/calendarList')) return route.fulfill({ json: { items: [
+        { id: 'main', summary: '個人', accessRole: 'owner', primary: true },
+      ] } });
+      if (req.method() === 'POST' || req.method() === 'PATCH') {
+        const body = req.postDataJSON();
+        if (req.method() === 'PATCH') expect(req.headers()['if-match']).toBe(stored!.etag);
+        else {
+          const expected = initiallyAllDay
+            ? [{ date: '2026-09-24' }, { date: '2026-09-25' }]
+            : [{ dateTime: '2026-09-24T00:00:00.000Z', timeZone: 'Asia/Tokyo' },
+              { dateTime: '2026-09-24T01:00:00.000Z', timeZone: 'Asia/Tokyo' }];
+          expect([body.start, body.end]).toEqual(expected);
+        }
+        // Model nested PATCH semantics, including explicit null deletion.
+        const next = { ...stored, ...body,
+          start: mergeDate(stored?.start || {}, body.start), end: mergeDate(stored?.end || {}, body.end) };
+        if ([next.start, next.end].some(date => !!date.date === !!date.dateTime)) {
+          return route.fulfill({ status: 400, json: { error: { message: 'Invalid date representation' } } });
+        }
+        stored = { ...next, etag: '"v' + ++writes + '"' };
+        return route.fulfill({ json: stored });
+      }
+      return route.fulfill({ json: { items: stored ? [stored] : [] } });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Googleに接続' }).click();
+    await expect(page.getByRole('button', { name: '予定を更新' })).toBeEnabled();
+    await page.getByRole('button', { name: '＋ 予定' }).click();
+    await page.getByLabel('件名').fill('切り替えテスト');
+    await page.getByLabel('開始日', { exact: true }).fill('2026-09-24');
+    await page.getByLabel('終了日', { exact: true }).fill('2026-09-24');
+    await page.getByLabel('開始時刻').fill('09:00');
+    await page.getByLabel('終了時刻').fill('10:00');
+    await page.getByLabel('終日', { exact: true }).setChecked(initiallyAllDay);
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await expect.poll(() => writes).toBe(1);
+    await expect(page.locator('.statusbar')).not.toContainText('保存中');
+
+    // Exercise same-format editing before converting the existing event.
+    for (const [index, allDay] of [initiallyAllDay, !initiallyAllDay].entries()) {
+      await page.getByRole('button', { name: /切り替えテスト/ }).click();
+      await page.getByLabel('件名').fill('切り替えテスト' + index);
+      await page.getByLabel('終日', { exact: true }).setChecked(allDay);
+      await page.getByRole('button', { name: '保存', exact: true }).click();
+      await expect.poll(() => writes).toBe(index + 2);
+      await expect(page.locator('.statusbar')).not.toContainText('保存中');
+      await page.reload();
+      await page.getByRole('button', { name: /切り替えテスト/ }).click();
+      await expect(page.getByLabel('終日', { exact: true })).toBeChecked({ checked: allDay });
+      await expect(page.getByLabel('開始日', { exact: true })).toHaveValue('2026-09-24');
+      await expect(page.getByLabel('終了日', { exact: true })).toHaveValue('2026-09-24');
+      if (allDay) {
+        expect(stored!.start).toEqual({ date: '2026-09-24' });
+        expect(stored!.end).toEqual({ date: '2026-09-25' });
+      } else {
+        await expect(page.getByLabel('開始時刻')).toHaveValue('09:00');
+        await expect(page.getByLabel('終了時刻')).toHaveValue('10:00');
+        expect(stored!.start).toEqual({ dateTime: '2026-09-24T00:00:00.000Z', timeZone: 'Asia/Tokyo' });
+        expect(stored!.end).toEqual({ dateTime: '2026-09-24T01:00:00.000Z', timeZone: 'Asia/Tokyo' });
+      }
+      await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+    }
+  });
+}
+
 test('Google pagination, recurring instance update, failure recovery and reconnection', async ({ page }) => {
   await mockGoogle(page);
   let stored = { ...instance }, failPatch = false, expire = false;
