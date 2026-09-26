@@ -84,13 +84,13 @@ test('settings validation, calendar visibility and month navigation', async ({ p
   await page.getByLabel('終了は翌日').uncheck();
   await expect(page.getByRole('button', { name: '適用' })).toBeDisabled();
   await page.getByLabel('終了は翌日').check();
-  await page.getByLabel('土曜日・日曜日を表示').uncheck();
+  await expect(page.getByLabel('土曜日・日曜日を表示')).toHaveCount(0);
   await page.getByLabel('仕事', { exact: true }).uncheck();
   await page.getByRole('button', { name: '適用' }).click();
-  await expect(page.locator('.day-column')).toHaveCount(5);
+  await expect(page.locator('.day-column')).toHaveCount(7);
   await expect(page.getByRole('button', { name: /週間プランニング/ })).toHaveCount(0);
   await page.getByRole('button', { name: '月', exact: true }).click();
-  await expect(page.locator('.month-cell')).toHaveCount(30);
+  await expect(page.locator('.month-cell')).toHaveCount(42);
   await page.getByRole('button', { name: '次の期間' }).click();
   await expect(page.getByRole('heading')).toHaveText('2026年 10月');
 });

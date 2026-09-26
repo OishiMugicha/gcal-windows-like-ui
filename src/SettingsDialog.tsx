@@ -30,7 +30,6 @@ export default function SettingsDialog({ initial, calendars, onSave, onClose, ta
       <fieldset><legend>週表示</legend>
         <label className="field">週の始まり<select value={value.weekStartsOn} onChange={e => patch({ weekStartsOn: Number(e.target.value) as 0 | 1 })}>
           <option value={1}>月曜日</option><option value={0}>日曜日</option></select></label>
-        <label className="check"><input type="checkbox" checked={value.showWeekends} onChange={e => patch({ showWeekends: e.target.checked })} />土曜日・日曜日を表示</label>
       </fieldset>
       <fieldset><legend>予定の追加</legend>
         <label className="field">予定追加時のデフォルトカレンダー<select value={value.defaultCalendarId} onChange={e => patch({ defaultCalendarId: e.target.value })}>

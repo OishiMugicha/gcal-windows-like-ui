@@ -273,9 +273,9 @@ export default function App() {
     {todo.banner}
     <section className="calendar-surface" aria-label="カレンダー" aria-busy={loading || todo.loading || busy || todo.busy || connecting}>
       {settings.view === 'month' ? <>
-        <div className="month-weekdays" style={{ gridTemplateColumns: 'repeat(' + (settings.showWeekends ? 7 : 5) + ', 1fr)' }}>
-          {days.slice(0, settings.showWeekends ? 7 : 5).map(day => <span key={day}>{weekdays[weekday(day)]}</span>)}</div>
-        <div className="month-grid" style={{ gridTemplateColumns: 'repeat(' + (settings.showWeekends ? 7 : 5) + ', minmax(0, 1fr))' }}>
+        <div className="month-weekdays" style={{ gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {days.slice(0, 7).map(day => <span key={day}>{weekdays[weekday(day)]}</span>)}</div>
+        <div className="month-grid" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {days.map(day => {
             const onDay = filtered.filter(e => isOnDay(e, day)).sort((a, b) => Number(b.allDay) - Number(a.allDay) || (!a.allDay && !b.allDay ? a.start.localeCompare(b.start) : 0));
             const renderEvent = (e: CalendarEvent) => <button key={e.calendarId + e.id} className="month-event" style={calendarColor(e)} onClick={() => openEditor(e)}>{!e.allDay && <span>{timeOf(e.start)} </span>}{e.title}</button>;

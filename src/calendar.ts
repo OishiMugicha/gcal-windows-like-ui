@@ -3,7 +3,7 @@ export const ZONE = 'Asia/Tokyo';
 export const MINUTE = 60_000;
 export const defaults: Settings = {
   startMinute: 480, endMinute: 1560, weekStartsOn: 1,
-  showWeekends: true, view: 'week', selectedCalendars: [], defaultCalendarId: '',
+  view: 'week', selectedCalendars: [], defaultCalendarId: '',
 };
 export const pad = (n: number) => String(n).padStart(2, '0');
 export function dateKey(date: Date = new Date()): string {
@@ -29,16 +29,21 @@ export function timeLabel(minute: number): string {
 export function timeOf(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', { timeZone: ZONE, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
 }
+export function startOfWeek(day: string, weekStartsOn: 0 | 1): string {
+  return addDays(day, -((weekday(day) - weekStartsOn + 7) % 7));
+}
+export function consecutiveDays(first: string, count = 7): string[] {
+  return Array.from({ length: count }, (_, i) => addDays(first, i));
+}
 export function visibleDays(anchor: string, settings: Settings): string[] {
   if (settings.view === 'day') return [anchor];
   let first = anchor, count = 7;
   if (settings.view === 'month') {
     first = anchor.slice(0, 8) + '01';
-    first = addDays(first, -((weekday(first) - settings.weekStartsOn + 7) % 7));
+    first = startOfWeek(first, settings.weekStartsOn);
     count = 42;
-  } else first = addDays(anchor, -((weekday(anchor) - settings.weekStartsOn + 7) % 7));
-  return Array.from({ length: count }, (_, i) => addDays(first, i))
-    .filter(d => settings.showWeekends || (weekday(d) !== 0 && weekday(d) !== 6));
+  } else first = startOfWeek(anchor, settings.weekStartsOn);
+  return consecutiveDays(first, count);
 }
 export function rangeFor(days: string[], settings: Settings) {
   // Include both the full civil dates (all-day events) and the extended last night.
@@ -94,7 +99,6 @@ export function validateSettings(value: Partial<Settings>): Settings {
     startMinute: validRange ? start : defaults.startMinute,
     endMinute: validRange ? end : defaults.endMinute,
     weekStartsOn: value.weekStartsOn === 0 ? 0 : 1,
-    showWeekends: value.showWeekends !== false,
     view: ['day', 'week', 'month'].includes(value.view ?? '') ? value.view! : 'week',
     selectedCalendars: Array.isArray(value.selectedCalendars) ? value.selectedCalendars.filter(x => typeof x === 'string') : [],
   };

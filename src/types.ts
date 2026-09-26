@@ -3,7 +3,6 @@ export interface Settings {
   startMinute: number;
   endMinute: number;
   weekStartsOn: 0 | 1;
-  showWeekends: boolean;
   view: View;
   selectedCalendars: string[];
   defaultCalendarId: string;

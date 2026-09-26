@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, atMinute, defaultCalendar, defaults, isOnDay, layoutEvents, rangeFor, timeLabel, validateSettings, visibleDays } from './calendar';
+import { addDays, atMinute, defaultCalendar, defaults, isOnDay, layoutEvents, rangeFor, timeLabel, validateSettings, visibleDays, startOfWeek, consecutiveDays } from './calendar';
 import type { CalendarEvent } from './types';
 const event = (id: string, start: number, end: number): CalendarEvent => ({ id, title: id, calendarId: 'test', allDay: false,
   start: new Date(atMinute('2026-09-21', start)).toISOString(), end: new Date(atMinute('2026-09-21', end)).toISOString() });
@@ -35,10 +35,10 @@ describe('civil dates and settings', () => {
     expect(isOnDay(e, '2026-09-22')).toBe(true);
     expect(isOnDay(e, '2026-09-23')).toBe(false);
   });
-  it('handles month/year boundaries and hides weekends consistently', () => {
+  it('handles month/year boundaries and always includes weekends', () => {
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
-    expect(visibleDays('2026-09-27', { ...defaults, showWeekends: false })).toEqual(['2026-09-21','2026-09-22','2026-09-23','2026-09-24','2026-09-25']);
-    expect(visibleDays('2026-09-24', { ...defaults, view: 'month', showWeekends: false })).toHaveLength(30);
+    expect(visibleDays('2026-09-27', defaults)).toEqual(consecutiveDays('2026-09-21'));
+    expect(visibleDays('2026-09-24', { ...defaults, view: 'month' })).toHaveLength(42);
   });
   it('rejects invalid stored time ranges and accepts a full 24 hours', () => {
     expect(validateSettings({ startMinute: 600, endMinute: 600 }).endMinute).toBe(1560);
@@ -66,5 +66,27 @@ describe('default calendar', () => {
     for (const id of ['', 'missing', 'read']) expect(defaultCalendar(calendars, ['b'], id)?.id).toBe('b');
     expect(defaultCalendar(calendars, [], '')?.id).toBe('a');
     expect(defaultCalendar(calendars.slice(0, 1), ['read'], 'read')).toBeUndefined();
+  });
+});
+
+
+describe('rolling week', () => {
+  it('shows Wednesday through Tuesday and includes the final overnight hours', () => {
+    const days = consecutiveDays('2026-09-23');
+    expect(days).toEqual(['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29']);
+    expect(rangeFor(days, defaults)).toEqual({ start: '2026-09-22T15:00:00.000Z', end: '2026-09-29T17:00:00.000Z' });
+  });
+  it('aligns explicit resets to the configured weekday', () => {
+    expect(startOfWeek('2026-09-24', 0)).toBe('2026-09-20');
+    expect(startOfWeek('2026-09-24', 1)).toBe('2026-09-21');
+  });
+  it('crosses years and leap days without skipping dates', () => {
+    expect(consecutiveDays('2026-12-30').at(-1)).toBe('2027-01-05');
+    expect(consecutiveDays('2028-02-28').slice(0, 3)).toEqual(['2028-02-28', '2028-02-29', '2028-03-01']);
+  });
+  it('drops the obsolete weekend preference from saved settings', () => {
+    const settings = validateSettings(JSON.parse('{"showWeekends":false,"weekStartsOn":0}'));
+    expect(settings).not.toHaveProperty('showWeekends');
+    expect(visibleDays('2026-09-24', settings)).toHaveLength(7);
   });
 });
