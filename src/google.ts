@@ -172,6 +172,8 @@ export async function moveGoogleEvent(source: CalendarEvent, destinationCalendar
   return result;
 }
 
+export class TaskNotFound extends Error {}
+
 // Tasks uses the same OAuth token, but failures remain separate from Calendar.
 export async function tasksRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!token || Date.now() >= expiresAt) { disconnectGoogle(); throw new ConnectionExpired(); }
@@ -190,10 +192,11 @@ export async function tasksRequest<T>(path: string, init: RequestInit = {}): Pro
   if (response.status === 401) { if (token === requestToken) disconnectGoogle(); throw new ConnectionExpired(); }
   if (response.status === 403) throw new Error('Google Tasks APIの有効化とToDoへのアクセス権限を確認してください。');
   if (response.status === 412) throw new Error('このToDoは別の場所で変更されています。閉じて更新してから編集してください。');
-  if (response.status === 404) throw new Error('ToDoが見つかりません。閉じて更新してください。');
+  if (response.status === 404) throw new TaskNotFound('ToDoが見つかりません。閉じて更新してください。');
   if (response.status === 429) throw new Error('アクセスが集中しています。少し待ってから再試行してください。');
   if (init.method && response.status >= 500) throw new OperationUncertain('ToDoの保存結果を確認できません。');
   if (!response.ok) throw new Error('Google ToDoへの操作に失敗しました（' + response.status + '）。');
+  if (init.method === 'DELETE') return undefined as T;
   try { return await response.json() as T; }
   catch {
     if (init.method) throw new OperationUncertain('ToDoの保存結果を確認できません。');

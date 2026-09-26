@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import type { DragEvent } from 'react';
 import Modal from './Modal';
-import { ConnectionExpired, hasTasksAccess, OperationUncertain } from './google';
-import { getTask, loadTaskLists, loadTasks, matchesChanges, patchTask, taskDay } from './tasks';
+import { ConnectionExpired, hasTasksAccess, OperationUncertain, TaskNotFound } from './google';
+import { deleteTask, getTask, loadTaskLists, loadTasks, matchesChanges, patchTask, taskDay } from './tasks';
 import type { Task, TaskChanges, TaskList } from './tasks';
 interface Preferences { enabled: boolean; completed: boolean; lists: string[] | null; }
 const key = 'calendar95.tasks';
@@ -28,7 +29,10 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
   const [expired, setExpired] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [editorError, setEditorError] = useState('');
-  const [uncertain, setUncertain] = useState<{ task: Task; changes: TaskChanges } | null>(null);
+  const [uncertain, setUncertain] = useState<({ kind: 'update'; task: Task; changes: TaskChanges } | { kind: 'delete'; task: Task }) | null>(null);
+  const dragging = useRef<Task | null>(null);
+  const suppressClick = useRef(false);
+  const [dropDay, setDropDay] = useState('');
   const revision = useRef(0), saving = useRef(false);
   const first = days[0], last = days.at(-1)!;
   const access = connected && hasTasksAccess();
@@ -80,8 +84,8 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
       replace(original);
       if (fromEditor) setEditing(optimistic);
       if (e instanceof OperationUncertain) {
-        setUncertain({ task, changes });
-        if (!fromEditor) setEditing(task);
+        setUncertain({ kind: 'update', task, changes });
+        if (!fromEditor) setEditing(optimistic);
         setEditorError('保存結果が不明です。「保存結果を確認」を押してください。');
       } else {
         if (fromEditor) setEditorError(message(e)); else setOperationError(message(e));
@@ -89,11 +93,34 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
       }
     } finally { saving.current = false; setBusy(false); }
   }
+  function remove(task: Task) { setTasks(current => current.filter(t => !sameTask(t, task))); }
+  async function destroy(task: Task) {
+    if (saving.current || blocked || connecting || uncertain) return;
+    saving.current = true; setBusy(true); revision.current++; setLoading(false); setEditorError('');
+    try {
+      await deleteTask(task);
+      remove(task); setEditing(null);
+    } catch (e) {
+      if (e instanceof TaskNotFound) { remove(task); setEditing(null); }
+      else if (e instanceof OperationUncertain) {
+        setUncertain({ kind: 'delete', task });
+        setEditorError('削除結果が不明です。「削除結果を確認」を押してください。');
+      } else {
+        setEditorError(message(e));
+        if (e instanceof ConnectionExpired) { setExpired(true); onExpired(); }
+      }
+    } finally { saving.current = false; setBusy(false); }
+  }
   async function check() {
-    if (!uncertain || saving.current) return;
-    saving.current = true; setBusy(true);
+    if (!uncertain || saving.current || blocked || connecting) return;
+    saving.current = true; setBusy(true); revision.current++; setLoading(false);
     try {
       const latest = await getTask(uncertain.task);
+      if (uncertain.kind === 'delete') {
+        if (latest.deleted) { remove(latest); setEditing(null); }
+        else { replace(latest); setEditing(current => current && { ...current, etag: latest.etag }); setEditorError('ToDoはまだ残っています。確認して再度削除してください。'); }
+        setUncertain(null); setExpired(false); return;
+      }
       replace(latest);
       if (matchesChanges(latest, uncertain.changes)) { setUncertain(null); setEditing(null); }
       else {
@@ -102,6 +129,9 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
       }
       setExpired(false);
     } catch (e) {
+      if (uncertain.kind === 'delete' && e instanceof TaskNotFound) {
+        remove(uncertain.task); setUncertain(null); setEditing(null); return;
+      }
       setEditorError(message(e));
       if (e instanceof ConnectionExpired) { setExpired(true); onExpired(); }
     } finally { saving.current = false; setBusy(false); }
@@ -109,16 +139,43 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
   const visible = access && preferences.enabled ? tasks.filter(task => taskDay(task) && !task.deleted
     && (preferences.completed || task.status !== 'completed')
     && (preferences.lists === null || preferences.lists.includes(task.listId))) : [];
-  function row(task: Task) {
-    return <div key={'task:' + task.listId + ':' + task.id} className={'task-row' + (task.status === 'completed' ? ' completed' : '')}>
-      <input type="checkbox" aria-label={task.title + 'を完了'} checked={task.status === 'completed'} disabled={busy || blocked || connecting || !!uncertain}
-        onChange={e => void save(task, { status: e.target.checked ? 'completed' : 'needsAction' }, false)} />
-      <button className="task-title" onClick={() => { if (saving.current || blocked || connecting || uncertain) return; setEditing(task); setEditorError(''); }} disabled={busy || blocked || connecting || !!uncertain}>{task.title || '（タイトルなし）'}</button>
-    </div>;
+  const disabled = busy || blocked || connecting || !!uncertain;
+  function row(task: Task, placement: 'all-day' | 'month' | 'agenda') {
+    return <button key={'task:' + task.listId + ':' + task.id}
+      className={'task-row ' + (placement === 'month' ? 'month-event' : placement === 'agenda' ? 'agenda-item' : 'all-day-event') + (task.status === 'completed' ? ' completed' : '')}
+      disabled={disabled} draggable={!disabled && placement !== 'agenda'}
+      onDragStart={e => {
+        if (disabled) { e.preventDefault(); return; }
+        dragging.current = task; suppressClick.current = true;
+        e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-calendar95-task', task.id);
+      }}
+      onDragEnd={() => { dragging.current = null; setDropDay(''); }}
+      onPointerDown={() => { suppressClick.current = false; }}
+      onClick={e => {
+        if (disabled || saving.current || (e.detail !== 0 && suppressClick.current)) return;
+        setEditing(task); setEditorError('');
+      }}>{task.title || '（タイトルなし）'}</button>;
   }
   return {
     enabled: preferences.enabled, busy, loading, refresh,
-    rows: (day: string) => visible.filter(t => taskDay(t) === day).map(row),
+    rows: (day: string, placement: 'all-day' | 'month' | 'agenda' = 'all-day') => visible.filter(t => taskDay(t) === day).map(t => row(t, placement)),
+    dropTarget: (day: string) => ({
+      'data-task-drop': dropDay === day ? 'active' : undefined,
+      onDragOver: (e: DragEvent<HTMLDivElement>) => {
+        if (!dragging.current || disabled) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropDay(day);
+      },
+      onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropDay('');
+      },
+      onDrop: (e: DragEvent<HTMLDivElement>) => {
+        const task = dragging.current;
+        dragging.current = null; setDropDay('');
+        if (!task || disabled) return;
+        e.preventDefault();
+        if (taskDay(task) !== day) void save(task, { due: day + 'T00:00:00Z' }, false);
+      },
+    }),
     settings: <fieldset><legend>Google ToDo</legend>
       <label className="check"><input type="checkbox" checked={preferences.enabled} disabled={busy || connecting}
         onChange={e => setPreferences(p => ({ ...p, enabled: e.target.checked }))} />Google ToDoを表示</label>
@@ -137,34 +194,45 @@ export function useTasks({ connected, connecting, blocked, version, days, onExpi
       <span>{operationError || error || '設定からGoogle ToDoへのアクセスを許可してください。'}</span>
       <button onClick={() => { setOperationError(''); void refresh(); }} disabled={busy || loading || connecting}>ToDoを再取得</button>
     </div> : null,
-    editor: editing && <TaskEditor task={editing} busy={busy || connecting} error={editorError} blocked={!!uncertain}
+    editor: editing && <TaskEditor task={editing} busy={busy || blocked || connecting} error={editorError} blocked={!!uncertain}
       onClose={() => { if (!saving.current && !connecting) { setEditing(null); setUncertain(null); void refresh(); } }}
+      onDelete={() => void destroy(editing)} checkLabel={uncertain?.kind === 'delete' ? '削除結果を確認' : '保存結果を確認'}
       onSave={changes => void save(editing, changes, true)} onCheck={() => void check()}
       onReconnect={expired || !access ? onReconnect : undefined} />,
   };
 }
-function TaskEditor({ task, busy, blocked, error, onClose, onSave, onCheck, onReconnect }: {
+function TaskEditor({ task, busy, blocked, error, onClose, onSave, onCheck, onReconnect, onDelete, checkLabel }: {
   task: Task; busy: boolean; blocked: boolean; error: string; onClose: () => void;
-  onSave: (changes: TaskChanges) => void; onCheck: () => void; onReconnect?: () => void;
+  onSave: (changes: TaskChanges) => void; onCheck: () => void; onReconnect?: () => void; onDelete: () => void; checkLabel: string;
 }) {
   const fieldId = useId();
   const [title, setTitle] = useState(task.title), [notes, setNotes] = useState(task.notes || '');
+  const [status, setStatus] = useState(task.status);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [day, setDay] = useState(taskDay(task));
   return <Modal title="ToDoの編集" busy={busy} onClose={onClose}>
-    <form className="dialog-body" onSubmit={e => { e.preventDefault(); if (!busy && !blocked) onSave({ title: title.trim(),
+    <form className="dialog-body" onSubmit={e => { e.preventDefault(); if (!busy && !blocked && !confirmDelete) onSave({ title: title.trim(), status,
       ...(task.assignmentInfo ? {} : { notes }), due: day ? day + 'T00:00:00Z' : null }); }}>
       <fieldset disabled={busy || blocked}>
         <label className="field">タイトル<input required maxLength={1024} value={title} onChange={e => setTitle(e.target.value)} /></label>
         <div className="field"><label htmlFor={fieldId}>メモ</label><textarea id={fieldId} maxLength={8192} value={notes} disabled={!!task.assignmentInfo} onChange={e => setNotes(e.target.value)} /></div>
         {!!task.assignmentInfo && <p className="field-note">割り当てられたToDoのメモは元のサービスで編集してください。</p>}
+        <div className="field"><label htmlFor={fieldId + '-status'}>状態</label><select id={fieldId + '-status'} value={status} onChange={e => setStatus(e.target.value as Task['status'])}>
+          <option value="needsAction">未完了</option><option value="completed">完了</option>
+        </select></div>
         <label className="field">日付<input type="date" value={day} onChange={e => setDay(e.target.value)} /></label>
         {!day && <p className="field-note">日付なしで保存するとカレンダーから非表示になります。</p>}
       </fieldset>
       {error && <p role="alert" className="error-text">{error}</p>}
       {onReconnect && <button type="button" disabled={busy} onClick={onReconnect}>入力を保持してGoogleに再接続</button>}
-      <div className="dialog-actions"><button type="button" disabled={busy} onClick={onClose}>閉じる</button>
-        {blocked ? <button type="button" disabled={busy} onClick={onCheck}>保存結果を確認</button>
-          : <button className="default-button" disabled={busy || !title.trim()}>保存</button>}
+      {confirmDelete && !blocked && <div className="delete-confirm" role="alert">
+        <p>このToDoを削除しますか？{!!task.assignmentInfo && ' 元のDocs・Chat側のタスクも削除されます。'}</p>
+        <button type="button" disabled={busy} onClick={onDelete}>削除する</button>
+        <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>キャンセル</button>
+      </div>}
+      <div className="dialog-actions"><button type="button" className="delete-button" disabled={busy || blocked} onClick={() => setConfirmDelete(true)}>削除…</button><button type="button" disabled={busy} onClick={onClose}>閉じる</button>
+        {blocked ? <button type="button" disabled={busy} onClick={onCheck}>{checkLabel}</button>
+          : <button className="default-button" disabled={busy || confirmDelete || !title.trim()}>保存</button>}
       </div>
     </form>
   </Modal>;

@@ -45,3 +45,7 @@ export function matchesChanges(task: Task, changes: TaskChanges) {
     ? taskDay(task) === (typeof value === 'string' ? value.slice(0, 10) : '')
     : (task[key as keyof Task] || '') === (value || ''));
 }
+
+export async function deleteTask(task: Task): Promise<void> {
+  await tasksRequest<void>(pathFor(task), { method: 'DELETE', headers: task.etag ? { 'If-Match': task.etag } : {} });
+}

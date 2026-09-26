@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 const calendarScopes = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
-async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; overflow?: boolean } = {}) {
+async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; overflow?: boolean; assigned?: boolean; title?: string } = {}) {
   await page.clock.install({ time: new Date('2026-09-24T03:00:00Z') });
   await page.addInitScript(enabled => {
     localStorage.setItem('calendar95.tasks', JSON.stringify({ enabled, completed: false, lists: null }));
@@ -11,14 +11,22 @@ async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; 
     route.request().url().includes('/calendarList') ? [{ id: 'calendar', summary: '個人', accessRole: 'owner', primary: true }]
       : options.overflow ? [{ id: 'event', summary: '終日予定', start: { date: '2026-09-24' }, end: { date: '2026-09-25' } }] : [],
   } }));
-  let stored: Record<string, unknown> = { id: 'task', title: '買い物', notes: '牛乳', due: '2026-09-24T00:00:00Z', status: 'needsAction', etag: 'v1' };
-  const state = { hold: undefined as Promise<void> | undefined, fail: '', patches: [] as Record<string, unknown>[], queries: [] as URL[], gets: 0 };
+  let stored: Record<string, unknown> = { id: 'task', title: options.title || '買い物', ...(options.assigned ? { assignmentInfo: {} } : {}), notes: '牛乳', due: '2026-09-24T00:00:00Z', status: 'needsAction', etag: 'v1' };
+  const state = { hold: undefined as Promise<void> | undefined, fail: '', patches: [] as Record<string, unknown>[], queries: [] as URL[], gets: 0, deletes: 0, deleted: false };
   await page.route('https://tasks.googleapis.com/tasks/v1/**', async route => {
     const req = route.request(), url = new URL(req.url()); state.queries.push(url);
     if (state.fail === '401') return route.fulfill({ status: 401, json: {} });
     if (state.fail === '403') return route.fulfill({ status: 403, json: {} });
     if (url.pathname.endsWith('/users/@me/lists')) return route.fulfill({ json: url.searchParams.has('pageToken')
       ? { items: [{ id: 'list', title: 'マイタスク' }] } : { items: [], nextPageToken: 'lists2' } });
+    if (req.method() === 'DELETE') {
+      state.deletes++;
+      if (state.fail === 'delete403') return route.fulfill({ status: 403, json: {} });
+      if (state.fail !== 'deleteUnapplied') state.deleted = true;
+      if (state.fail === 'deleteUncertain' || state.fail === 'deleteUnapplied') return route.abort();
+      return route.fulfill({ status: 204 });
+    }
+    if (state.deleted && url.pathname.endsWith('/tasks/task')) return route.fulfill({ status: 404, json: {} });
     if (req.method() === 'PATCH') {
       await state.hold;
       const changes = req.postDataJSON(); state.patches.push(changes);
@@ -28,7 +36,7 @@ async function setup(page: Page, options: { grant?: boolean; enabled?: boolean; 
       return route.fulfill({ json: stored });
     }
     if (url.pathname.endsWith('/tasks/task')) { state.gets++; return route.fulfill({ json: stored }); }
-    return route.fulfill({ json: url.searchParams.has('pageToken') ? { items: [stored,
+    return route.fulfill({ json: url.searchParams.has('pageToken') ? { items: [...(state.deleted ? [] : [stored]),
       { id: 'undated', title: '日付なし', status: 'needsAction' },
       { id: 'outside', title: '範囲外', status: 'needsAction', due: '2026-10-31T00:00:00Z' },
     ] } : { items: [], nextPageToken: 'tasks2' } });
@@ -53,14 +61,14 @@ test('ToDo displays by date, edits without event creation, completes and restore
   await page.getByLabel('日付', { exact: true }).fill('2026-09-25');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  expect(state.patches[0]).toEqual({ title: '夕食の買い物', notes: 'パン', due: '2026-09-25T00:00:00Z' });
-  await page.getByRole('checkbox', { name: '夕食の買い物を完了' }).click();
+  expect(state.patches[0]).toEqual({ title: '夕食の買い物', notes: 'パン', due: '2026-09-25T00:00:00Z', status: 'needsAction' });
+  await setStatus(page, '夕食の買い物', 'completed');
   await expect(page.getByRole('button', { name: '夕食の買い物', exact: true })).toHaveCount(0);
   await settings(page); await page.getByLabel('完了済みも表示').check();
   await page.getByRole('button', { name: '適用' }).click();
   await expect(page.locator('.task-row.completed')).toContainText('夕食の買い物');
   expect(state.queries.some(url => url.searchParams.get('showHidden') === 'true')).toBe(true);
-  await page.getByRole('checkbox', { name: '夕食の買い物を完了' }).click();
+  await setStatus(page, '夕食の買い物', 'needsAction');
   await expect(page.locator('.task-row.completed')).toHaveCount(0);
   await page.getByRole('button', { name: '月', exact: true }).click();
   await expect(page.locator('.month-cell').filter({ has: page.getByRole('button', { name: '2026-09-25の日表示' }) })).toContainText('夕食の買い物');
@@ -145,7 +153,7 @@ for (const operation of ['edit', 'complete', 'undate'] as const) {
     let release!: () => void;
     state.hold = new Promise<void>(resolve => { release = resolve; });
     state.fail = 'patch403';
-    if (operation === 'complete') await page.getByRole('checkbox', { name: '買い物を完了' }).click();
+    if (operation === 'complete') await setStatus(page, '買い物', 'completed');
     else {
       await page.getByRole('button', { name: '買い物', exact: true }).click();
       await page.getByLabel('タイトル', { exact: true }).fill('保持するタイトル');
@@ -161,6 +169,7 @@ for (const operation of ['edit', 'complete', 'undate'] as const) {
     release();
     await expect(page.getByRole('alert')).toContainText('Google Tasks API');
     await expect(page.getByRole('button', { name: '買い物', exact: true })).toBeVisible();
+    if (operation === 'complete') await expect(page.getByLabel('状態', { exact: true })).toHaveValue('completed');
     if (operation !== 'complete') {
       await expect(page.getByLabel('タイトル', { exact: true })).toHaveValue('保持するタイトル');
       await expect(page.getByLabel('メモ', { exact: true })).toHaveValue('保持するメモ');
@@ -168,3 +177,127 @@ for (const operation of ['edit', 'complete', 'undate'] as const) {
     }
   });
 }
+
+async function setStatus(page: Page, title: string, status: string) {
+  await page.getByRole('button', { name: title, exact: true }).click();
+  await page.getByLabel('状態', { exact: true }).selectOption(status);
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+}
+
+test('status is only saved on submit and calendar rows have no checkbox', async ({ page }) => {
+  const state = await setup(page);
+  await expect(page.locator('.all-day-row input')).toHaveCount(0);
+  await page.getByRole('button', { name: '買い物', exact: true }).click();
+  await page.getByLabel('状態', { exact: true }).selectOption('completed');
+  await page.getByRole('dialog').getByRole('button', { name: '閉じる', exact: true }).last().click();
+  expect(state.patches).toHaveLength(0);
+  await page.getByRole('button', { name: '買い物', exact: true }).click();
+  await expect(page.getByLabel('状態', { exact: true })).toHaveValue('needsAction');
+});
+
+for (const failure of ['', 'delete403', 'deleteUncertain', 'deleteUnapplied']) {
+  test('delete confirmation and recovery: ' + (failure || 'success'), async ({ page }) => {
+    const state = await setup(page);
+    await page.getByRole('button', { name: '買い物', exact: true }).click();
+    await page.getByRole('button', { name: '削除…', exact: true }).click();
+    await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+    expect(state.deletes).toBe(0);
+    await page.getByRole('button', { name: '削除…', exact: true }).click();
+    state.fail = failure;
+    await page.getByRole('button', { name: '削除する', exact: true }).click();
+    if (failure === 'delete403') {
+      await expect(page.getByRole('alert').filter({ hasText: 'Google Tasks API' })).toBeVisible();
+      await expect(page.locator('.task-row')).toBeVisible();
+      state.fail = '';
+      await page.getByRole('button', { name: '削除する', exact: true }).click();
+    } else if (failure.startsWith('deleteU')) {
+      await page.getByRole('button', { name: '削除結果を確認', exact: true }).click();
+      if (failure === 'deleteUnapplied') {
+        await expect(page.getByText('ToDoはまだ残っています。確認して再度削除してください。')).toBeVisible();
+        state.fail = '';
+        await page.getByRole('button', { name: '削除する', exact: true }).click();
+      }
+    }
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.task-row')).toHaveCount(0);
+  });
+}
+
+for (const view of ['week', 'month']) {
+  test('drag dates, ignore same day and roll back rejection: ' + view, async ({ page }) => {
+    const state = await setup(page);
+    if (view === 'month') await page.getByRole('button', { name: '月', exact: true }).click();
+    const cells = page.locator(view === 'week' ? '.all-day-cell' : '.month-cell');
+    const task = page.getByRole('button', { name: '買い物', exact: true });
+    const origin = cells.filter({ has: task });
+    const originIndex = await origin.evaluate(el => Array.from(el.parentElement!.children).filter(c => c.className === el.className).indexOf(el));
+    const target = view === 'month'
+      ? cells.filter({ has: page.getByRole('button', { name: '2026-09-25の日表示' }) })
+      : cells.nth(originIndex + 1);
+    await task.dragTo(origin, { targetPosition: { x: 10, y: 10 } });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await task.dragTo(page.locator('.statusbar'));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(state.patches).toHaveLength(0);
+    await task.dragTo(target);
+    await expect(target).toContainText('買い物');
+    await expect.poll(() => state.patches.length).toBe(1);
+    expect(state.patches[0]).toEqual({ due: '2026-09-25T00:00:00Z' });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(task).toBeEnabled();
+    state.fail = 'patch403';
+    await task.dragTo(cells.nth(0));
+    await expect(page.getByRole('alert')).toContainText('Google Tasks API');
+    await expect(target).toContainText('買い物');
+  });
+}
+
+test('task dimensions match all-day and month events', async ({ page }) => {
+  await setup(page, { overflow: true });
+  // Move the calendar fixture to the next date so both rows are visible.
+  await page.route('https://www.googleapis.com/calendar/v3/calendars/**', route => route.fulfill({ json: { items: [
+    { id: 'event', summary: '終日予定', start: { date: '2026-09-25' }, end: { date: '2026-09-26' } },
+  ] } }));
+  await page.getByRole('button', { name: '予定を更新' }).click();
+  for (const month of [false, true]) {
+    if (month) await page.getByRole('button', { name: '月', exact: true }).click();
+    const task = page.getByRole('button', { name: '買い物', exact: true });
+    const event = page.getByRole('button', { name: '終日予定', exact: true });
+    await expect(task).toBeVisible();
+    const metrics = (el: Element) => { const css = getComputedStyle(el); return [el.getBoundingClientRect().height, css.fontSize, css.padding]; };
+    expect(await task.evaluate(metrics)).toEqual(await event.evaluate(metrics));
+  }
+});
+
+test('uncertain drag saves can be checked without losing the destination date', async ({ page }) => {
+  const state = await setup(page);
+  state.fail = 'uncertain';
+  const destination = page.locator('.all-day-cell').nth(4);
+  await page.getByRole('button', { name: '買い物', exact: true }).dragTo(destination);
+  await expect(page.getByLabel('日付', { exact: true })).toHaveValue('2026-09-25');
+  await page.getByRole('button', { name: '保存結果を確認', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(destination).toContainText('買い物');
+  expect(state.patches).toEqual([{ due: '2026-09-25T00:00:00Z' }]);
+});
+
+test('assigned task deletion explains the effect on the original task', async ({ page }) => {
+  await setup(page, { assigned: true });
+  await page.getByRole('button', { name: '買い物', exact: true }).click();
+  await page.getByRole('button', { name: '削除…', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('元のDocs・Chat側のタスクも削除されます');
+});
+
+test('long task titles stay on one line within the day cell', async ({ page }) => {
+  await setup(page, { title: '長いタイトル'.repeat(40) });
+  const row = page.locator('.task-row');
+  const layout = await row.evaluate(el => ({
+    width: el.getBoundingClientRect().width,
+    cellWidth: el.parentElement!.getBoundingClientRect().width,
+    overflow: getComputedStyle(el).textOverflow,
+    whiteSpace: getComputedStyle(el).whiteSpace,
+  }));
+  expect(layout.width).toBeLessThanOrEqual(layout.cellWidth);
+  expect(layout.overflow).toBe('ellipsis');
+  expect(layout.whiteSpace).toBe('nowrap');
+});

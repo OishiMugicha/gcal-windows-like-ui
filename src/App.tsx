@@ -279,8 +279,8 @@ export default function App() {
           {days.map(day => {
             const onDay = filtered.filter(e => isOnDay(e, day)).sort((a, b) => Number(b.allDay) - Number(a.allDay) || (!a.allDay && !b.allDay ? a.start.localeCompare(b.start) : 0));
             const renderEvent = (e: CalendarEvent) => <button key={e.calendarId + e.id} className="month-event" style={calendarColor(e)} onClick={() => openEditor(e)}>{!e.allDay && <span>{timeOf(e.start)} </span>}{e.title}</button>;
-            const items = [...onDay.filter(e => e.allDay).map(renderEvent), ...todo.rows(day), ...onDay.filter(e => !e.allDay).map(renderEvent)];
-            return <div key={day} className={'month-cell' + (day.slice(0, 7) !== anchor.slice(0, 7) ? ' other-month' : '') + (day === dateKey() ? ' month-today' : '')}>
+            const items = [...onDay.filter(e => e.allDay).map(renderEvent), ...todo.rows(day, 'month'), ...onDay.filter(e => !e.allDay).map(renderEvent)];
+            return <div key={day} {...todo.dropTarget(day)} className={'month-cell' + (day.slice(0, 7) !== anchor.slice(0, 7) ? ' other-month' : '') + (day === dateKey() ? ' month-today' : '')}>
               <button className="month-date" aria-label={day + 'の日表示'} onClick={() => { setAnchor(day); selectView('day'); }}>{Number(day.slice(8))}</button>
               <div className="month-events">{items.slice(0, 3)}</div>
               {items.length > 3 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 3}件</button>}
@@ -293,7 +293,7 @@ export default function App() {
         <div className="all-day-row" style={gridStyle}><span className="zone-label">終日</span>{days.map(day => {
           const allDay = filtered.filter(e => e.allDay && isOnDay(e, day));
           const items = [...allDay.map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="all-day-event" onClick={() => openEditor(e)}>{e.title}</button>), ...todo.rows(day)];
-          return <div key={day} className="all-day-cell">{items.slice(0, 1)}
+          return <div key={day} {...todo.dropTarget(day)} className="all-day-cell">{items.slice(0, 1)}
             {items.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 1}件</button>}</div>;
         })}</div>
         <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || todo.busy || loading || connecting} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
@@ -309,7 +309,7 @@ export default function App() {
       onCheckMove={uncertainMove ? () => void checkMove() : undefined}
       onSave={e => void save(e)} onDelete={() => void remove()} onClose={closeEditor} />}
     {listDay && <Modal title={listDay.replaceAll('-', '.') + ' の予定'} busy={todo.busy} onClose={() => { if (!todo.busy) setListDay(null); }}>
-      <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}{todo.rows(listDay)}</div>
+      <div className="dialog-body agenda-list">{filtered.filter(e => isOnDay(e, listDay) && (settings.view === 'month' || e.allDay)).map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="agenda-item" onClick={() => { setListDay(null); openEditor(e); }}><span>{e.allDay ? '終日' : timeOf(e.start)}</span>{e.title}</button>)}{todo.rows(listDay, 'agenda')}</div>
     </Modal>}
     {todo.editor}
     {disconnectPrompt && <Modal title="Googleとの接続を解除" onClose={() => setDisconnectPrompt(false)}><div className="dialog-body"><p>この画面から予定を消し、サンプル表示に戻ります。Google Calendarの予定は削除されません。</p>
