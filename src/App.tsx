@@ -284,6 +284,10 @@ export default function App() {
     <nav className="toolbar" aria-label="カレンダー操作">
       <div className="nav-buttons"><button onClick={() => navigate(-1)} aria-label="前の期間">◀</button><button onClick={today}>今日</button><button onClick={() => navigate(1)} aria-label="次の期間">▶</button></div>
       <h1>{periodLabel}</h1>
+      {settings.view === 'week' && <div className="week-navigation" role="group" aria-label="週の表示位置">
+        <button onClick={() => week.shift(-1)} disabled={busy || todo.busy || connecting} aria-label="1日前へ">◀ 1日</button>
+        <button onClick={() => week.shift(1)} disabled={busy || todo.busy || connecting} aria-label="1日後へ">1日 ▶</button>
+      </div>}
       <div className="view-buttons" aria-label="表示切替">{(['day', 'week', 'month'] as View[]).map((view, i) => <button key={view} className={settings.view === view ? 'pressed' : ''} aria-pressed={settings.view === view} onClick={() => selectView(view)}>{['日', '週', '月'][i]}</button>)}</div>
       <span className="toolbar-divider" /><button onClick={() => newDraft()} disabled={busy || todo.busy || connecting}>＋ 予定</button>
       <button onClick={() => setShowSettings(true)} disabled={busy || todo.busy}>設定</button>
@@ -320,11 +324,6 @@ export default function App() {
             {items.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 1}件</button>}</div>;
         })}</div>
         <TimeGrid days={renderDays} visibleDays={days} pendingDays={pendingDays} loading={loading || connecting} settings={settings} events={filtered} calendars={calendars} busy={busy || todo.busy || loading || connecting || week.moving} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
-      </div>}
-      {settings.view === 'week' && <div className="week-navigation" aria-label="週の表示位置">
-        <button onClick={() => week.shift(-1)} disabled={busy || todo.busy || connecting} aria-label="1日前へ">◀ 1日</button>
-        <span>{loading || todo.loading ? '予定・ToDoを取得中…' : '横スクロール / Shift＋ホイールで移動'}</span>
-        <button onClick={() => week.shift(1)} disabled={busy || todo.busy || connecting} aria-label="1日後へ">1日 ▶</button>
       </div>}
       {!selected.length && !todo.enabled && <div className="empty-selection"><span>表示するカレンダーが選択されていません。</span><button onClick={() => setShowSettings(true)}>設定を開く</button></div>}
     </section>
