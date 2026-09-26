@@ -41,7 +41,7 @@ test('default calendar persists, applies to both entry points and stays separate
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.locator('.statusbar')).toContainText('現在非表示');
   expect(writes).toEqual(['/calendar/v3/calendars/other/events']);
-  await page.locator('.day-column').nth(3).click({ position: { x: 30, y: 100 } });
+  await page.locator('.day-column:not([inert])').nth(3).click({ position: { x: 30, y: 100 } });
   await expect(page.getByRole('dialog').getByRole('combobox', { name: /^カレンダー/ })).toHaveValue('other');
   await page.getByRole('dialog').getByRole('combobox', { name: /^カレンダー/ }).selectOption('main');
   await page.getByRole('button', { name: '保存', exact: true }).click();

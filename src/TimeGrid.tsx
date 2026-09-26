@@ -5,7 +5,8 @@ import type { Calendar, CalendarEvent, Settings } from './types';
 
 type TimedEvent = CalendarEvent & { allDay: false };
 interface Props {
-  days: string[]; settings: Settings; events: CalendarEvent[]; calendars: Calendar[];
+  days: string[]; visibleDays: string[]; settings: Settings; events: CalendarEvent[]; calendars: Calendar[];
+  pendingDays: string[]; loading: boolean;
   busy: boolean;
   onCreate: (start: number, end: number) => void;
   onEdit: (event: CalendarEvent) => void;
@@ -16,7 +17,7 @@ interface Drag {
   event?: TimedEvent; origin: number; current: number;
   x: number; y: number; moved: boolean; column: number;
 }
-export default function TimeGrid({ days, settings, events, calendars, busy, onCreate, onEdit, onChange }: Props) {
+export default function TimeGrid({ days, visibleDays, pendingDays, loading, settings, events, calendars, busy, onCreate, onEdit, onChange }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -35,7 +36,9 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
   const titleSize = Math.max(0, Math.min(24, gridHeight * 30 / duration + 2));
   function point(e: ReactPointerEvent, fixedColumn?: number) {
     const rect = container.current!.getBoundingClientRect();
-    const column = fixedColumn ?? Math.max(0, Math.min(days.length - 1, Math.floor((e.clientX - rect.left - 58) / (rect.width - 58) * days.length)));
+    const columns = [...container.current!.querySelectorAll<HTMLElement>('.day-column:not([inert])')];
+    const hit = columns.find(column => e.clientX < column.getBoundingClientRect().right) ?? columns.at(-1)!;
+    const column = fixedColumn ?? days.indexOf(hit.dataset.day!);
     const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
     const minute = Math.max(settings.startMinute, Math.min(settings.endMinute, settings.startMinute + Math.round(ratio * duration / 15) * 15));
     return { column, stamp: atMinute(days[column], minute) };
@@ -100,8 +103,9 @@ export default function TimeGrid({ days, settings, events, calendars, busy, onCr
     {days.map((day, index) => {
       const lo = atMinute(day, settings.startMinute), hi = atMinute(day, settings.endMinute);
       const inNow = now >= lo && now < hi;
-      return <div key={day} data-day={day} className={'day-column' + (inNow ? ' today-column' : '')}
+      return <div key={day} inert={!visibleDays.includes(day)} data-day={day} className={'day-column' + (inNow ? ' today-column' : '')}
         onPointerDown={e => { if (e.target === e.currentTarget) start(e, index, 'create'); }}>
+        {pendingDays.includes(day) && <span className="day-loading">{loading ? '予定を取得中…' : '予定は未取得です'}</span>}
         {ticks.map(m => <div className="hour-line" key={m} style={{ top: (m - settings.startMinute) / duration * 100 + '%' }} />)}
         {layoutEvents(displayEvents, day, settings).map(s => {
           const calendar = calendars.find(c => c.id === s.event.calendarId);

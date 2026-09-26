@@ -1,10 +1,11 @@
 import { useTasks } from './useTasks';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, moveUnavailableReason, rangeFor, readSettings, sameEventContent, timeLabel, timeOf, visibleDays, weekday } from './calendar';
+import { addDays, atMinute, dateKey, defaultCalendar, isOnDay, moveUnavailableReason, rangeFor, readSettings, sameEventContent, timeLabel, timeOf, visibleDays, weekday, startOfWeek, consecutiveDays } from './calendar';
 import { demoCalendars, demoEvents } from './demo';
 import type { Calendar, CalendarEvent, EventDraft, Settings, View } from './types';
 import TimeGrid from './TimeGrid';
+import { useWeekScroll } from './useWeekScroll';
 import { useCalendarTools } from './useCalendarTools';
 import SettingsDialog from './SettingsDialog';
 import EventEditor, { draftEvent, draftFrom } from './EventEditor';
@@ -21,6 +22,8 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(initialSettings);
   useCalendarTools(setSettings);
   const [anchor, setAnchor] = useState(dateKey());
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(dateKey(), settings.weekStartsOn));
+  const [weekReset, setWeekReset] = useState(0);
   const [mode, setMode] = useState<'demo' | 'google'>('demo');
   const [calendars, setCalendars] = useState<Calendar[]>(demoCalendars);
   const [events, setEvents] = useState<CalendarEvent[]>(demoEvents);
@@ -35,6 +38,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [connectionVersion, setConnectionVersion] = useState(0);
+  const [loadedRange, setLoadedRange] = useState<{ start: number; end: number; selection: string; version: number } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const connectionAttempt = useRef(0);
@@ -43,15 +47,21 @@ export default function App() {
   const [listDay, setListDay] = useState<string | null>(null);
   const [disconnectPrompt, setDisconnectPrompt] = useState(false);
   const revision = useRef(0), pendingNewId = useRef(''), busyRef = useRef(false);
-  const days = useMemo(() => visibleDays(anchor, settings), [anchor, settings]);
+  const days = useMemo(() => settings.view === 'week' ? consecutiveDays(weekStart) : visibleDays(anchor, settings), [anchor, settings, weekStart]);
+  const week = useWeekScroll(weekStart, settings.view === 'week', weekReset,
+    connecting || showSettings || !!draft || !!listDay || disconnectPrompt, setWeekStart);
+  const renderDays = settings.view === 'week' ? week.renderDays : days;
   const selected = mode === 'demo' ? demoSelected : settings.selectedCalendars;
   const preferredCalendar = mode === 'demo' ? demoDefault : settings.defaultCalendarId;
   const selectedKey = selected.join('\n');
-  const range = rangeFor(days, settings);
+  const range = rangeFor(renderDays, settings);
+  const pendingDays = mode === 'google' && selected.length ? renderDays.filter(day => !loadedRange
+    || loadedRange.selection !== selectedKey || loadedRange.version !== connectionVersion
+    || atMinute(day, 0) < loadedRange.start || atMinute(day, Math.max(1440, settings.endMinute)) > loadedRange.end) : [];
   const filtered = events.filter(e => selected.includes(e.calendarId));
-  const gridStyle = { gridTemplateColumns: '58px repeat(' + days.length + ', minmax(0, 1fr))' };
+  const gridStyle = { gridTemplateColumns: '58px repeat(' + renderDays.length + ', minmax(0, 1fr))' };
   const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
-  const todo = useTasks({ connected: mode === 'google', connecting, blocked: busy, version: connectionVersion, days,
+  const todo = useTasks({ connected: mode === 'google', connecting, blocked: busy, version: connectionVersion, days: renderDays,
     onExpired: () => setExpired(true), onReconnect: () => void connect(false, true) });
   useEffect(() => { if (clientId) prepareGoogle().catch(() => {}); }, [clientId]);
   useEffect(() => {
@@ -76,6 +86,7 @@ export default function App() {
       const results = await Promise.all(settings.selectedCalendars.map(id => loadEvents(id, range.start, range.end)));
       if (requestId !== revision.current) return;
       setEvents(results.flat()); setExpired(false);
+      setLoadedRange({ start: Date.parse(range.start), end: Date.parse(range.end), selection: selectedKey, version: connectionVersion });
     } catch (e) {
       if (requestId !== revision.current) return;
       setError(errorMessage(e)); if (e instanceof ConnectionExpired) setExpired(true);
@@ -97,12 +108,23 @@ export default function App() {
     if (settings.view === 'month') {
       const date = new Date(anchor.slice(0, 8) + '01T00:00:00Z');
       date.setUTCMonth(date.getUTCMonth() + direction); setAnchor(date.toISOString().slice(0, 10));
-    } else setAnchor(addDays(anchor, direction * (settings.view === 'week' ? 7 : 1)));
+    } else if (settings.view === 'week') week.shift(direction * 7);
+    else setAnchor(addDays(anchor, direction));
   }
-  function selectView(view: View) { setSettings(s => ({ ...s, view })); }
-  function openEditor(event: CalendarEvent) { if (busyRef.current || todo.busy || connecting) return; pendingNewId.current = ''; setEditingSource(event); setUncertainMove(null); setEditorError(''); setDraft(draftFrom(event)); }
-  function newDraft(start = atMinute(anchor, settings.startMinute), end = start + 60 * 60_000) {
-    if (busyRef.current || todo.busy || connecting) return;
+  function resetWeek(day: string, startsOn = settings.weekStartsOn) {
+    setWeekStart(startOfWeek(day, startsOn)); setWeekReset(v => v + 1);
+  }
+  function today() { const day = dateKey(); setAnchor(day); resetWeek(day); }
+  function selectView(view: View) {
+    if (view === settings.view) return;
+    if (view === 'week') resetWeek(anchor);
+    else if (settings.view === 'week') setAnchor(days.includes(dateKey()) ? dateKey() : weekStart);
+    setSettings(s => ({ ...s, view }));
+  }
+  function openDay(day: string) { setAnchor(day); setSettings(s => ({ ...s, view: 'day' })); }
+  function openEditor(event: CalendarEvent) { if (busyRef.current || todo.busy || connecting || week.moving) return; pendingNewId.current = ''; setEditingSource(event); setUncertainMove(null); setEditorError(''); setDraft(draftFrom(event)); }
+  function newDraft(start = atMinute(settings.view === 'week' ? (days.includes(dateKey()) ? dateKey() : weekStart) : anchor, settings.startMinute), end = start + 60 * 60_000) {
+    if (busyRef.current || todo.busy || connecting || week.moving) return;
     const calendar = defaultCalendar(calendars, selected, preferredCalendar);
     if (!calendar) { setError('書き込み可能なカレンダーがありません。'); return; }
     pendingNewId.current = newEventId(); setEditingSource(null); setUncertainMove(null); setEditorError('');
@@ -246,6 +268,7 @@ export default function App() {
     void refresh();
   }
   function applySettings(next: Settings) {
+    if (next.weekStartsOn !== settings.weekStartsOn) resetWeek(settings.view === 'week' ? weekStart : anchor, next.weekStartsOn);
     if (mode === 'demo') {
       setDemoSelected(next.selectedCalendars); setDemoDefault(next.defaultCalendarId);
       setSettings({ ...next, selectedCalendars: settings.selectedCalendars, defaultCalendarId: settings.defaultCalendarId });
@@ -254,12 +277,12 @@ export default function App() {
   }
   const periodLabel = settings.view === 'month' ? Number(anchor.slice(0, 4)) + '年 ' + Number(anchor.slice(5, 7)) + '月'
     : settings.view === 'day' ? anchor.replaceAll('-', '.') + '（' + weekdays[weekday(anchor)] + '）'
-    : days[0].replaceAll('-', '.') + ' — ' + days.at(-1)!.slice(5).replace('-', '.');
+    : days[0].replaceAll('-', '.') + ' — ' + (days[0].slice(0, 4) === days.at(-1)!.slice(0, 4) ? days.at(-1)!.slice(5).replace('-', '.') : days.at(-1)!.replaceAll('-', '.'));
   const calendarColor = (e: CalendarEvent) => ({ '--event-color': e.color || calendars.find(c => c.id === e.calendarId)?.color || '#3159a6' }) as CSSProperties;
   return <main className="app-window">
     <header className="titlebar"><img src="/favicon.svg" alt="" /><strong>Calendar 95</strong><span>{mode === 'demo' ? 'サンプル' : 'Google Calendar'}</span></header>
     <nav className="toolbar" aria-label="カレンダー操作">
-      <div className="nav-buttons"><button onClick={() => navigate(-1)} aria-label="前の期間">◀</button><button onClick={() => setAnchor(dateKey())}>今日</button><button onClick={() => navigate(1)} aria-label="次の期間">▶</button></div>
+      <div className="nav-buttons"><button onClick={() => navigate(-1)} aria-label="前の期間">◀</button><button onClick={today}>今日</button><button onClick={() => navigate(1)} aria-label="次の期間">▶</button></div>
       <h1>{periodLabel}</h1>
       <div className="view-buttons" aria-label="表示切替">{(['day', 'week', 'month'] as View[]).map((view, i) => <button key={view} className={settings.view === view ? 'pressed' : ''} aria-pressed={settings.view === view} onClick={() => selectView(view)}>{['日', '週', '月'][i]}</button>)}</div>
       <span className="toolbar-divider" /><button onClick={() => newDraft()} disabled={busy || todo.busy || connecting}>＋ 予定</button>
@@ -281,23 +304,28 @@ export default function App() {
             const renderEvent = (e: CalendarEvent) => <button key={e.calendarId + e.id} className="month-event" style={calendarColor(e)} onClick={() => openEditor(e)}>{!e.allDay && <span>{timeOf(e.start)} </span>}{e.title}</button>;
             const items = [...onDay.filter(e => e.allDay).map(renderEvent), ...todo.rows(day, 'month'), ...onDay.filter(e => !e.allDay).map(renderEvent)];
             return <div key={day} {...todo.dropTarget(day)} className={'month-cell' + (day.slice(0, 7) !== anchor.slice(0, 7) ? ' other-month' : '') + (day === dateKey() ? ' month-today' : '')}>
-              <button className="month-date" aria-label={day + 'の日表示'} onClick={() => { setAnchor(day); selectView('day'); }}>{Number(day.slice(8))}</button>
+              <button className="month-date" aria-label={day + 'の日表示'} onClick={() => openDay(day)}>{Number(day.slice(8))}</button>
               <div className="month-events">{items.slice(0, 3)}</div>
               {items.length > 3 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 3}件</button>}
             </div>;
           })}
         </div>
-      </> : <>
-        <div className="date-head" style={gridStyle}><span className="zone-label">JST</span>{days.map(day => <button key={day} onClick={() => { setAnchor(day); selectView('day'); }}
+      </> : <div ref={week.viewport} className={'time-view' + (settings.view === 'week' ? ' week-viewport' : '')} data-moving={week.moving}>
+        <div className="date-head" style={gridStyle}><span className="zone-label">JST</span>{renderDays.map(day => <button key={day} inert={!days.includes(day)} onClick={() => openDay(day)}
           className={'day-heading' + (day === dateKey() ? ' today' : '') + (weekday(day) === 0 ? ' sunday' : '')} aria-label={day + 'の日表示'}><span>{weekdays[weekday(day)]}</span><strong>{Number(day.slice(8))}</strong></button>)}</div>
-        <div className="all-day-row" style={gridStyle}><span className="zone-label">終日</span>{days.map(day => {
+        <div className="all-day-row" style={gridStyle}><span className="zone-label">終日</span>{renderDays.map(day => {
           const allDay = filtered.filter(e => e.allDay && isOnDay(e, day));
           const items = [...allDay.map(e => <button key={e.calendarId + e.id} style={calendarColor(e)} className="all-day-event" onClick={() => openEditor(e)}>{e.title}</button>), ...todo.rows(day)];
-          return <div key={day} {...todo.dropTarget(day)} className="all-day-cell">{items.slice(0, 1)}
+          return <div key={day} inert={!days.includes(day)} {...todo.dropTarget(day)} className="all-day-cell">{items.slice(0, 1)}
             {items.length > 1 && <button className="more-button" onClick={() => setListDay(day)}>ほか{items.length - 1}件</button>}</div>;
         })}</div>
-        <TimeGrid days={days} settings={settings} events={filtered} calendars={calendars} busy={busy || todo.busy || loading || connecting} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
-      </>}
+        <TimeGrid days={renderDays} visibleDays={days} pendingDays={pendingDays} loading={loading || connecting} settings={settings} events={filtered} calendars={calendars} busy={busy || todo.busy || loading || connecting || week.moving} onCreate={newDraft} onEdit={openEditor} onChange={e => void save(e, false)} />
+      </div>}
+      {settings.view === 'week' && <div className="week-navigation" aria-label="週の表示位置">
+        <button onClick={() => week.shift(-1)} disabled={busy || todo.busy || connecting} aria-label="1日前へ">◀ 1日</button>
+        <span>{loading || todo.loading ? '予定・ToDoを取得中…' : '横スクロール / Shift＋ホイールで移動'}</span>
+        <button onClick={() => week.shift(1)} disabled={busy || todo.busy || connecting} aria-label="1日後へ">1日 ▶</button>
+      </div>}
       {!selected.length && !todo.enabled && <div className="empty-selection"><span>表示するカレンダーが選択されていません。</span><button onClick={() => setShowSettings(true)}>設定を開く</button></div>}
     </section>
     <footer className="statusbar" aria-live="polite"><span>{connecting ? 'Googleへの接続を確認中…' : loading || todo.loading ? '予定・ToDoを取得中…' : busy || todo.busy ? '保存中…' : notice || (expired ? 'Googleへの再接続が必要です' : mode === 'demo' ? 'サンプル表示 · 変更はGoogleに送信されません' : 'Google Calendarに接続済み')}</span>

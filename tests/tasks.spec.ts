@@ -140,7 +140,7 @@ test('mobile ToDo restores with saved authorization and remains within the viewp
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.getByRole('button', { name: '買い物', exact: true })).toBeVisible();
-  await expect(page.locator('.day-column')).toHaveCount(1);
+  await expect(page.locator('.day-column:not([inert])')).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: '.runtime/tasks-mobile.png' });
   await page.getByRole('button', { name: '買い物', exact: true }).click();
@@ -227,10 +227,10 @@ for (const view of ['week', 'month']) {
   test('drag dates, ignore same day and roll back rejection: ' + view, async ({ page }) => {
     const state = await setup(page);
     if (view === 'month') await page.getByRole('button', { name: '月', exact: true }).click();
-    const cells = page.locator(view === 'week' ? '.all-day-cell' : '.month-cell');
+    const cells = page.locator(view === 'week' ? '.all-day-cell:not([inert])' : '.month-cell');
     const task = page.getByRole('button', { name: '買い物', exact: true });
     const origin = cells.filter({ has: task });
-    const originIndex = await origin.evaluate(el => Array.from(el.parentElement!.children).filter(c => c.className === el.className).indexOf(el));
+    const originIndex = await origin.evaluate(el => Array.from(el.parentElement!.children).filter(c => c.className === el.className && !c.hasAttribute('inert')).indexOf(el));
     const target = view === 'month'
       ? cells.filter({ has: page.getByRole('button', { name: '2026-09-25の日表示' }) })
       : cells.nth(originIndex + 1);
@@ -272,7 +272,7 @@ test('task dimensions match all-day and month events', async ({ page }) => {
 test('uncertain drag saves can be checked without losing the destination date', async ({ page }) => {
   const state = await setup(page);
   state.fail = 'uncertain';
-  const destination = page.locator('.all-day-cell').nth(4);
+  const destination = page.locator('.all-day-cell:not([inert])').nth(4);
   await page.getByRole('button', { name: '買い物', exact: true }).dragTo(destination);
   await expect(page.getByLabel('日付', { exact: true })).toHaveValue('2026-09-25');
   await page.getByRole('button', { name: '保存結果を確認', exact: true }).click();
@@ -300,4 +300,30 @@ test('long task titles stay on one line within the day cell', async ({ page }) =
   expect(layout.width).toBeLessThanOrEqual(layout.cellWidth);
   expect(layout.overflow).toBe('ellipsis');
   expect(layout.whiteSpace).toBe('nowrap');
+});
+
+
+test('rolling week keeps ToDo dates aligned and locks horizontal movement during a task drag', async ({ page }) => {
+  const state = await setup(page);
+  const task = page.getByRole('button', { name: '買い物', exact: true });
+  await expect(task).toBeVisible();
+  const requests = state.queries.length;
+  await page.getByRole('button', { name: '1日後へ' }).click();
+  await page.getByRole('button', { name: '1日後へ' }).click();
+  await page.clock.runFor(400);
+  await expect(page.locator('.day-column:not([inert])').first()).toHaveAttribute('data-day', '2026-09-23');
+  const cells = page.locator('.all-day-cell:not([inert])');
+  await expect(cells.nth(1)).toContainText('買い物');
+  expect(state.queries).toHaveLength(requests);
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await task.dispatchEvent('dragstart', { dataTransfer: transfer });
+  await page.locator('.week-viewport').dispatchEvent('wheel', { deltaX: 600 });
+  await page.clock.runFor(400);
+  await expect(page.locator('.day-column:not([inert])').first()).toHaveAttribute('data-day', '2026-09-23');
+  await cells.nth(5).dispatchEvent('dragover', { dataTransfer: transfer });
+  await cells.nth(5).dispatchEvent('drop', { dataTransfer: transfer });
+  await expect.poll(() => state.patches.length).toBe(1);
+  expect(state.patches[0].due).toBe('2026-09-28T00:00:00Z');
+  await expect(cells.nth(5)).toContainText('買い物');
+  await transfer.dispose();
 });

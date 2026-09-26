@@ -58,3 +58,26 @@
 .task-row.completed { text-decoration: line-through; color: #52604b; }
 .task-row[draggable="true"] { cursor: grab; }
 [data-task-drop="active"] { outline: 2px dashed #47732e; outline-offset: -2px; background: #e4eedb; }
+
+.time-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.week-viewport { overflow: hidden; --week-offset: 0px; --week-column-width: 0px; }
+.week-viewport > .date-head,
+.week-viewport > .all-day-row,
+.week-viewport > .time-grid {
+  width: calc(58px + 21 * var(--week-column-width));
+  transform: translateX(calc(-1 * var(--week-offset)));
+}
+.week-viewport .zone-label,
+.week-viewport .time-axis {
+  position: relative;
+  transform: translateX(var(--week-offset));
+  z-index: 10;
+  background: #fafafa;
+  border-right: 1px solid #aaa;
+}
+.week-viewport .date-head .zone-label { background: #e9e9e9; }
+.week-navigation { display: flex; align-items: center; gap: 8px; padding: 3px; background: #c0c0c0; border-top: 1px solid #808080; flex-shrink: 0; }
+.week-navigation button { min-height: 23px; padding: 1px 8px; }
+.week-navigation span { flex: 1; text-align: center; font-size: 11px; color: #414141; }
+.day-loading { position: absolute; top: 4px; left: 4px; color: #666; font-size: 11px; pointer-events: none; }
+@media (max-width: 680px) { .week-navigation span { font-size: 10px; } }

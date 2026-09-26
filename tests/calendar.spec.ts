@@ -4,7 +4,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 test('fixed range uses the available height and survives resize and reload', async ({ page }) => {
-  await expect(page.locator('.day-column')).toHaveCount(7);
+  await expect(page.locator('.day-column:not([inert])')).toHaveCount(7);
   await expect(page.locator('.time-axis span').first()).toHaveText('08:00');
   await expect(page.locator('.time-axis span').last()).toHaveText('02:00');
   for (const height of [900, 640]) {
@@ -48,7 +48,7 @@ test('overnight editor uses the actual next-day date; create/edit/delete works',
 test('dragging across columns preserves duration and updates real dates', async ({ page }) => {
   const source = page.locator('[data-event-id="demo-1"]');
   const box = (await source.boundingBox())!;
-  const cols = page.locator('.day-column');
+  const cols = page.locator('.day-column:not([inert])');
   const first = (await cols.nth(0).boundingBox())!, second = (await cols.nth(1).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -61,7 +61,7 @@ test('dragging across columns preserves duration and updates real dates', async 
   await expect(page.getByLabel('終了時刻')).toHaveValue('10:15');
 });
 test('dragging blank space creates a range; resize changes duration', async ({ page }) => {
-  const column = (await page.locator('.day-column').nth(3).boundingBox())!;
+  const column = (await page.locator('.day-column:not([inert])').nth(3).boundingBox())!;
   await page.mouse.move(column.x + 30, column.y + column.height * 2 / 18);
   await page.mouse.down();
   await page.mouse.move(column.x + 30, column.y + column.height * 3 / 18, { steps: 8 });
@@ -87,7 +87,7 @@ test('settings validation, calendar visibility and month navigation', async ({ p
   await expect(page.getByLabel('土曜日・日曜日を表示')).toHaveCount(0);
   await page.getByLabel('仕事', { exact: true }).uncheck();
   await page.getByRole('button', { name: '適用' }).click();
-  await expect(page.locator('.day-column')).toHaveCount(7);
+  await expect(page.locator('.day-column:not([inert])')).toHaveCount(7);
   await expect(page.getByRole('button', { name: /週間プランニング/ })).toHaveCount(0);
   await page.getByRole('button', { name: '月', exact: true }).click();
   await expect(page.locator('.month-cell')).toHaveCount(42);
@@ -106,7 +106,7 @@ test('all-day dates are inclusive in the editor and exclusive on the calendar', 
 test('mobile opens day view without horizontal overflow and supports keyboard dialogs', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await expect(page.locator('.day-column')).toHaveCount(1);
+  await expect(page.locator('.day-column:not([inert])')).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.getByRole('button', { name: '＋ 予定' }).click();
   await expect(page.getByLabel('件名')).toBeFocused();

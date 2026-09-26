@@ -13,7 +13,7 @@ test('missing environment ID keeps the demo usable and ignores legacy credential
     return route.abort();
   });
   await page.goto('/');
-  await expect(page.locator('.day-column')).toHaveCount(7);
+  await expect(page.locator('.day-column:not([inert])')).toHaveCount(7);
   await page.getByRole('button', { name: 'Googleに接続' }).click();
   await expect(page.getByText('Google接続はまだ設定されていません。サイトの管理者にお問い合わせください。')).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);

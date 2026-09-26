@@ -295,7 +295,7 @@ test('period changed during a save is fetched after the response', async ({ page
   await page.getByLabel('件名').fill('保存中に期間変更');
   await save(page);
   await page.getByRole('button', { name: '次の期間' }).click();
-  const fetched = page.waitForRequest(req => req.method() === 'GET' && req.url().includes('timeMin=2026-09-27'));
+  const fetched = page.waitForRequest(req => req.method() === 'GET' && req.url().includes('timeMin=2026-09-20'));
   release();
   await fetched;
   await expect(page.locator('.statusbar')).not.toContainText('保存中');
