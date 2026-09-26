@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { addDays, consecutiveDays } from './calendar';
+import { ScrollMomentum } from './scrollMomentum';
 
 // A bounded, three-week strip is recycled in whole-week increments. The offset
 // stays in pixels while a gesture is active; dates are committed only at rest.
@@ -18,13 +19,14 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
     if (!enabled || !el) return;
     let origin = start, width = 0, offset = 0, target = 0;
     let timer = 0, frame = 0, active = false, dragging = false;
-    let lastWheel = -Infinity, previousDelta = 0, peakDelta = 0, decreases = 0;
-    let settlingTail = false, tailDelta = 0;
+    const momentum = new ScrollMomentum();
+    let recycledPixels = 0;
     function paint() { el!.style.setProperty('--week-offset', `${offset}px`); }
     function recycle() {
       const shift = offset >= 14 * width ? 7 : offset <= 0 ? -7 : 0;
       if (!shift || !width) return;
       origin = addDays(origin, shift);
+      recycledPixels += shift * width;
       offset -= shift * width; target -= shift * width;
       flushSync(() => setBase(origin));
     }
@@ -59,6 +61,7 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
       const nextWidth = Math.max(1, (el!.clientWidth - 58) / 7);
       if (nextWidth === width) return;
       stopAnimation(); active = false; setMoving(false);
+      momentum.reset(); recycledPixels = 0;
       origin = current.current.start; setBase(origin);
       width = nextWidth;
       offset = target = 7 * width;
@@ -71,21 +74,13 @@ export function useWeekScroll(start: string, enabled: boolean, resetVersion: num
       e.preventDefault();
       if (dragging || current.current.blocked) return;
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 7 * width : 1;
-      const pixels = delta * unit, magnitude = Math.abs(pixels), now = performance.now();
-      // WheelEvent has no portable momentum flag. Recognize only the small,
-      // declining tail of a faster gesture; preserve deliberate slow movement.
-      const newGesture = now - lastWheel > 150 || Math.sign(pixels) !== Math.sign(previousDelta)
-        || (settlingTail && magnitude > Math.max(6, tailDelta * 2));
-      if (newGesture) { peakDelta = 0; decreases = 0; settlingTail = false; }
-      lastWheel = now;
-      if (settlingTail) { previousDelta = pixels; return; }
-      decreases = !newGesture && magnitude < Math.abs(previousDelta) ? decreases + 1 : 0;
-      previousDelta = pixels; peakDelta = Math.max(peakDelta, magnitude);
-      if (peakDelta >= 12 && decreases >= 3 && magnitude <= Math.min(4, peakDelta * 0.15)) {
-        settlingTail = true; tailDelta = magnitude;
-        animate(Math.round(offset / width) * width, 120);
+      const pixels = delta * unit;
+      const prediction = momentum.push(pixels, performance.now(), offset + recycledPixels, width);
+      if (prediction.target !== undefined) {
+        animate(prediction.target - recycledPixels, 100);
         return;
       }
+      if (prediction.ignore) return;
       stopAnimation(); begin();
       offset += pixels;
       while (offset >= 14 * width || offset <= 0) recycle();

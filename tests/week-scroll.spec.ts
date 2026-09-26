@@ -179,33 +179,41 @@ async function pixelWheel(page: Page, deltaX: number) {
   await page.clock.runFor(16);
 }
 
-test('snaps before the momentum tail ends and accepts a renewed or reversed gesture', async ({ page }) => {
-  await wheel(page, 1.6);
-  for (const delta of [24, 12, 6, 3]) await pixelWheel(page, delta);
-  for (const delta of [2.8, 2.5, 2.2, 2, 1.8, 1.6, 1.4, 1.2, 1]) await pixelWheel(page, delta);
-  // Inputs are still arriving every 16ms, but snapping has already finished.
-  await expect(page.locator('.week-viewport')).toHaveAttribute('data-moving', 'false');
-  await expect(columns(page).first()).toHaveAttribute('data-day', '2026-09-23');
+test('snaps to the predicted destination while momentum still has speed, then accepts acceleration and reversal', async ({ page }) => {
+  await page.clock.pauseAt(new Date('2026-09-24T03:01:00Z'));
+  const width = (await columns(page).first().boundingBox())!.width;
+  await pixelWheel(page, 1);
+  let stoppedAt = 0;
+  for (let time = 16; time <= 608; time += 16) {
+    const delta = width * 0.03 * 140 * (Math.exp(-(time - 16) / 140) - Math.exp(-time / 140));
+    await pixelWheel(page, delta);
+    if (!stoppedAt && await page.locator('.week-viewport').getAttribute('data-moving') === 'false') {
+      stoppedAt = time;
+      expect(delta).toBeGreaterThan(4);
+    }
+  }
+  expect(stoppedAt).toBeGreaterThan(0);
+  expect(stoppedAt).toBeLessThanOrEqual(400);
+  await expect(columns(page).first()).toHaveAttribute('data-day', '2026-09-25');
   const before = (await columns(page).first().boundingBox())!.x;
   await pixelWheel(page, 0.5);
   expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(before, 1);
-  // A fresh push in the same direction immediately takes control again.
+  // Two accelerating samples distinguish a fresh push from momentum noise.
+  await pixelWheel(page, 20);
   await pixelWheel(page, 20);
   expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(before - 20, 1);
-  for (const delta of [10, 5, 2]) await pixelWheel(page, delta);
-  await page.clock.runFor(130);
-  const settled = (await columns(page).first().boundingBox())!.x;
   await pixelWheel(page, -2);
-  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(settled + 2, 1);
+  expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(before - 18, 1);
   await settle(page);
 });
 
-test('keeps slow deliberate scrolling responsive and clears tail suppression after a pause', async ({ page }) => {
+test('keeps slow deliberate scrolling responsive and falls back to snapping after input stops', async ({ page }) => {
+  await page.clock.pauseAt(new Date('2026-09-24T03:01:00Z'));
   const initial = (await columns(page).first().boundingBox())!.x;
   for (let i = 0; i < 12; i++) await pixelWheel(page, 2);
   expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(initial - 24, 1);
-  for (const delta of [30, 15, 7, 3]) await pixelWheel(page, delta);
-  await page.clock.runFor(200);
+  await expect(page.locator('.week-viewport')).toHaveAttribute('data-moving', 'true');
+  await settle(page);
   const settled = (await columns(page).first().boundingBox())!.x;
   await pixelWheel(page, 2);
   expect((await columns(page).first().boundingBox())!.x).toBeCloseTo(settled - 2, 1);
